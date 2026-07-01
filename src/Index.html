@@ -5,7 +5,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Time to Roll">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@500&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <style>
 :root{
   --bg:#f4f3ef; --card:#ffffff; --ink:#1c1b18; --muted:#8a877f;
@@ -59,6 +61,8 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
 .row .rt{font-size:14px;color:var(--muted)}
 .row .x{border:0;background:transparent;color:var(--neg);font-size:20px;cursor:pointer;padding:4px 6px}
 .row .x:disabled{opacity:.25}
+.dragh{color:var(--muted);font-size:20px;padding:2px 6px 2px 2px;cursor:grab;touch-action:none;display:flex;align-items:center}
+.sortable-ghost{opacity:.4}
 .empty{padding:28px 16px;text-align:center;color:var(--muted);font-size:14px;line-height:1.6}
 .hide{display:none!important}
 
@@ -424,21 +428,28 @@ function delEdit(){
 
 /* ---- settings: reasons ---- */
 function renderReasonMgr(){
-  var el=$('reasonMgr');var n=S.reasons.length;
-  var rows=S.reasons.map(function(r,i){
-    return '<div class="row"><div class="mid tap" onclick="editReasonName(\''+esc(r.name)+'\')"><div class="t1">'+esc(r.name)+' <i class="ti ti-pencil" style="font-size:12px;color:var(--muted)"></i></div></div>'+
-      '<button class="x" style="color:var(--muted)" '+(i===0?'disabled':'')+' onclick="moveReason('+i+',-1)"><i class="ti ti-chevron-up"></i></button>'+
-      '<button class="x" style="color:var(--muted)" '+(i===n-1?'disabled':'')+' onclick="moveReason('+i+',1)"><i class="ti ti-chevron-down"></i></button>'+
+  var el=$('reasonMgr');
+  var rows=S.reasons.map(function(r){
+    return '<div class="row rrow" data-name="'+esc(r.name)+'">'+
+      '<span class="dragh"><i class="ti ti-menu-2"></i></span>'+
+      '<div class="mid tap" onclick="editReasonName(\''+esc(r.name)+'\')"><div class="t1">'+esc(r.name)+' <i class="ti ti-pencil" style="font-size:12px;color:var(--muted)"></i></div></div>'+
       '<button class="x" onclick="rmReason(\''+esc(r.name)+'\')"><i class="ti ti-trash"></i></button></div>';
   }).join('')||'<div class="empty">還沒有原因，從下面新增</div>';
-  el.innerHTML=rows+'<div class="add-row"><input id="newReason" placeholder="新增原因" onkeydown="if(event.key===\'Enter\')addReasonMgr()"><button onclick="addReasonMgr()">加入</button></div>';
+  el.innerHTML='<div id="reasonList">'+rows+'</div>'+
+    '<div class="add-row"><input id="newReason" placeholder="新增原因" onkeydown="if(event.key===\'Enter\')addReasonMgr()"><button onclick="addReasonMgr()">加入</button></div>';
+  initReasonSort();
 }
-function moveReason(i,dir){
-  var j=i+dir;if(j<0||j>=S.reasons.length)return;
-  var a=S.reasons.slice(),t=a[i];a[i]=a[j];a[j]=t;S.reasons=a;
-  renderReasonMgr();renderReasonChips();
-  google.script.run.withSuccessHandler(function(rs){S.reasons=rs;renderReasonMgr();renderReasonChips();})
-    .withFailureHandler(err).reorderReasons(a.map(function(x){return x.name;}));
+function initReasonSort(){
+  var list=$('reasonList');
+  if(!list||typeof Sortable==='undefined')return;
+  if(list._sortable)list._sortable.destroy();
+  list._sortable=Sortable.create(list,{handle:'.dragh',animation:150,onEnd:function(){
+    var names=[].slice.call(list.querySelectorAll('.rrow')).map(function(n){return n.getAttribute('data-name');});
+    var map={};S.reasons.forEach(function(r){map[r.name]=r;});
+    S.reasons=names.map(function(n){return map[n];}).filter(Boolean);
+    renderReasonChips();
+    google.script.run.withSuccessHandler(function(rs){S.reasons=rs;renderReasonChips();}).withFailureHandler(err).reorderReasons(names);
+  }});
 }
 function editReasonName(old){
   var n=prompt('修改原因（會一併更新歷史紀錄）',old);
