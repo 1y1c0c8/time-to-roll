@@ -22,9 +22,13 @@ var SHEET_POUCHES  = '菸草包';   // P2
 var CATEGORIES = ['加熱菸', '盒菸', '捲菸'];
 
 // 菸品 columns (1-based, fixed)
+// 剩餘支數(P_LEFT) 給加熱菸/盒菸用；未開包數(P_POUCHES) 給捲菸用（未開封的菸草包數）
 var P_ID = 1, P_CAT = 2, P_NAME = 3, P_PERBOX = 4, P_PRICE = 5,
-    P_PRICEUNIT = 6, P_LEFT = 7, P_DEFAULT = 8, P_STATUS = 9, P_CREATED = 10;
-var PRODUCT_HEADERS = ['id', '類別', '名稱', '每盒支數', '售價', '售價單位', '剩餘支數', '常用預設', '狀態', '建立時間'];
+    P_PRICEUNIT = 6, P_LEFT = 7, P_DEFAULT = 8, P_STATUS = 9, P_CREATED = 10, P_POUCHES = 11;
+var PRODUCT_HEADERS = ['id', '類別', '名稱', '每盒支數', '售價', '售價單位', '剩餘支數', '常用預設', '狀態', '建立時間', '未開包數'];
+
+var STICK_CATS = ['加熱菸', '盒菸'];   // 支為單位、可自動連動扣除
+function isStick(cat) { return STICK_CATS.indexOf(cat) >= 0; }
 
 // 紀錄 columns (1-based, fixed) — one sheet per month, named yyyy-MM
 var R_ID = 1, R_TIME = 2, R_REASON = 3, R_PID = 4, R_PNAME = 5, R_CAT = 6, R_POUCH = 7, R_COST = 8, R_NOTE = 9;
@@ -34,8 +38,10 @@ var RECORD_HEADERS = ['id', '時間', '原因', '菸品id', '菸品名稱', '類
 var RS_NAME = 1, RS_ORDER = 2, RS_ACTIVE = 3;
 var REASON_HEADERS = ['名稱', '排序', '啟用'];
 
-// 菸草包 columns (P2)
+// 菸草包 columns (P2, 1-based, fixed)
+var G_ID = 1, G_PID = 2, G_NAME = 3, G_OPEN = 4, G_DONE = 5, G_ROLLED = 6, G_PRICE = 7, G_STATUS = 8;
 var POUCH_HEADERS = ['id', '菸品id', '口味', '開封日', '用完日', '已捲支數', '售價', '狀態'];
+var POUCH_USING = '使用中', POUCH_DONE = '已用完';
 
 /* ------------------------------------------------------------------ web entry */
 
@@ -112,6 +118,7 @@ function getBootData() {
     settings: readSettings(),
     reasons: getReasons(),
     products: getProducts(),
+    pouches: getPouches(),
     records: getMonthRecords(tab),
     thisMonth: tab
   };
@@ -119,6 +126,15 @@ function getBootData() {
 
 function ensureReady_() {
   if (!sh(SHEET_SETTINGS) || !sh(SHEET_REASONS) || !sh(SHEET_PRODUCTS) || !sh(SHEET_POUCHES)) setup();
+  migrate_();
+}
+
+// 幫既有分頁補上後來新增的欄位表頭（P1 → P2）
+function migrate_() {
+  var p = sh(SHEET_PRODUCTS);
+  if (p && String(p.getRange(1, P_POUCHES).getValue()).trim() !== '未開包數') {
+    p.getRange(1, P_POUCHES).setValue('未開包數').setFontWeight('bold').setBackground('#e3efed');
+  }
 }
 
 function readSettings() {
@@ -166,6 +182,8 @@ function getProducts() {
       price: Number(row[P_PRICE - 1]) || 0,
       priceUnit: String(row[P_PRICEUNIT - 1] || ''),
       left: Number(row[P_LEFT - 1]) || 0,
+      pouchesLeft: Number(row[P_POUCHES - 1]) || 0,
+      isStick: isStick(String(row[P_CAT - 1])),
       isDefault: row[P_DEFAULT - 1] === true || String(row[P_DEFAULT - 1]).toUpperCase() === 'TRUE',
       row: i + 2
     });
@@ -191,6 +209,7 @@ function getMonthRecords(tab) {
       productId: String(row[R_PID - 1] || ''),
       productName: String(row[R_PNAME - 1] || ''),
       cat: String(row[R_CAT - 1] || ''),
+      pouchId: String(row[R_POUCH - 1] || ''),
       month: tab
     });
   });
@@ -200,9 +219,20 @@ function getMonthRecords(tab) {
 
 /* ------------------------------------------------------------------ 記錄 CRUD */
 
+// 記一根之後回傳整包最新狀態，前端一次刷新（記錄 + 庫存 + 菸草包）
+function state_(tab) {
+  return { records: getMonthRecords(tab), products: getProducts(), pouches: getPouches(), month: tab };
+}
+
 function addSmoke(payload) {
   ensureReady_();
   var prod = findProductById_(payload.productId);
+  var cat = prod ? prod.cat : '';
+  var pouchId = '';
+  if (cat === '捲菸') {
+    pouchId = String(payload.pouchId || '');
+    if (!pouchId) throw new Error('捲菸請先選一包使用中的菸草包');
+  }
   var now = new Date();
   var tab = monthTab(now);
   var s = getOrCreateMonthSheet(tab);
@@ -213,30 +243,50 @@ function addSmoke(payload) {
   row[R_REASON - 1] = payload.reason || '';
   row[R_PID - 1] = prod ? prod.id : (payload.productId || '');
   row[R_PNAME - 1] = prod ? prod.name : '';
-  row[R_CAT - 1] = prod ? prod.cat : '';
+  row[R_CAT - 1] = cat;
+  row[R_POUCH - 1] = pouchId;
   s.appendRow(row);
-  return { id: id, month: tab };
+  consumeInventory_(cat, row[R_PID - 1], pouchId);
+  return state_(tab);
 }
 
 function updateSmoke(payload) {
   var loc = findRecordRow_(payload.month, payload.id);
   if (!loc) throw new Error('找不到這筆紀錄');
+  var old = readRecordRow_(loc.sheet, loc.row);
+
   if (payload.reason != null) loc.sheet.getRange(loc.row, R_REASON).setValue(payload.reason);
+
   if (payload.productId != null) {
     var prod = findProductById_(payload.productId);
+    var newCat = prod ? prod.cat : '';
+    var newPouch = '';
+    if (newCat === '捲菸') {
+      newPouch = String(payload.pouchId || (old.cat === '捲菸' ? old.pouchId : '') || '');
+      if (!newPouch) throw new Error('捲菸請選一包菸草包');
+    }
+    var changed = (String(prod ? prod.id : payload.productId) !== old.pid) || (newPouch !== old.pouchId);
+    if (changed) {
+      restoreInventory_(old.cat, old.pid, old.pouchId);
+      consumeInventory_(newCat, prod ? prod.id : payload.productId, newPouch);
+    }
     loc.sheet.getRange(loc.row, R_PID).setValue(prod ? prod.id : payload.productId);
     loc.sheet.getRange(loc.row, R_PNAME).setValue(prod ? prod.name : '');
-    loc.sheet.getRange(loc.row, R_CAT).setValue(prod ? prod.cat : '');
+    loc.sheet.getRange(loc.row, R_CAT).setValue(newCat);
+    loc.sheet.getRange(loc.row, R_POUCH).setValue(newPouch);
   }
+
   if (payload.timeMillis) loc.sheet.getRange(loc.row, R_TIME).setValue(new Date(payload.timeMillis));
-  return true;
+  return state_(payload.month);
 }
 
 function deleteSmoke(payload) {
   var loc = findRecordRow_(payload.month, payload.id);
   if (!loc) throw new Error('找不到這筆紀錄');
+  var old = readRecordRow_(loc.sheet, loc.row);
   loc.sheet.deleteRow(loc.row);
-  return true;
+  restoreInventory_(old.cat, old.pid, old.pouchId);
+  return state_(payload.month);
 }
 
 function findRecordRow_(tab, id) {
@@ -245,6 +295,36 @@ function findRecordRow_(tab, id) {
   var ids = s.getRange(2, R_ID, s.getLastRow() - 1, 1).getValues();
   for (var i = 0; i < ids.length; i++) if (String(ids[i][0]) === String(id)) return { sheet: s, row: i + 2 };
   return null;
+}
+
+function readRecordRow_(sheet, row) {
+  var v = sheet.getRange(row, R_PID, 1, 4).getValues()[0]; // R_PID..R_POUCH
+  return { pid: String(v[0] || ''), cat: String(v[2] || ''), pouchId: String(v[3] || '') };
+}
+
+/* ------------------------------------------------------------------ 庫存連動 */
+
+function consumeInventory_(cat, pid, pouchId) {
+  if (isStick(cat)) adjustProductLeft_(pid, -1);
+  else if (cat === '捲菸' && pouchId) adjustPouchRolled_(pouchId, +1);
+}
+function restoreInventory_(cat, pid, pouchId) {
+  if (isStick(cat)) adjustProductLeft_(pid, +1);
+  else if (cat === '捲菸' && pouchId) adjustPouchRolled_(pouchId, -1);
+}
+function adjustProductLeft_(pid, delta) {
+  var loc = findProductRow_(pid);
+  if (!loc) return;
+  var nv = (Number(loc.sheet.getRange(loc.row, P_LEFT).getValue()) || 0) + delta;
+  if (nv < 0) nv = 0;
+  loc.sheet.getRange(loc.row, P_LEFT).setValue(nv);
+}
+function adjustPouchRolled_(pouchId, delta) {
+  var loc = findPouchRow_(pouchId);
+  if (!loc) return;
+  var nv = (Number(loc.sheet.getRange(loc.row, G_ROLLED).getValue()) || 0) + delta;
+  if (nv < 0) nv = 0;
+  loc.sheet.getRange(loc.row, G_ROLLED).setValue(nv);
 }
 
 /* ------------------------------------------------------------------ 原因 CRUD */
@@ -339,5 +419,90 @@ function findProductRow_(id) {
 function findProductById_(id) {
   var all = getProducts();
   for (var i = 0; i < all.length; i++) if (all[i].id === String(id)) return all[i];
+  return null;
+}
+
+/* ------------------------------------------------------------------ 買入 / 菸草包 (P2) */
+
+// qty = 盒數(加熱菸/盒菸) 或 包數(捲菸)
+function buyStock(payload) {
+  ensureReady_();
+  var prod = findProductById_(payload.id);
+  if (!prod) throw new Error('找不到菸品');
+  var qty = Math.max(0, Math.floor(Number(payload.qty) || 0));
+  if (!qty) throw new Error('數量要大於 0');
+  var loc = findProductRow_(prod.id);
+  if (prod.isStick) {
+    adjustProductLeft_(prod.id, qty * (prod.perBox || readSettings().perBox));
+  } else {   // 捲菸：加未開包數
+    var cur = Number(loc.sheet.getRange(loc.row, P_POUCHES).getValue()) || 0;
+    loc.sheet.getRange(loc.row, P_POUCHES).setValue(cur + qty);
+  }
+  return { products: getProducts(), pouches: getPouches() };
+}
+
+// 捲菸：開一包 → 建立「使用中」的菸草包，未開包數 -1
+function openPouch(payload) {
+  ensureReady_();
+  var prod = findProductById_(payload.productId);
+  if (!prod || prod.cat !== '捲菸') throw new Error('只有捲菸能開包');
+  var loc = findProductRow_(prod.id);
+  var cur = Number(loc.sheet.getRange(loc.row, P_POUCHES).getValue()) || 0;
+  if (cur > 0) loc.sheet.getRange(loc.row, P_POUCHES).setValue(cur - 1);
+  var g = sh(SHEET_POUCHES);
+  var row = new Array(POUCH_HEADERS.length).fill('');
+  row[G_ID - 1] = 'g' + Date.now();
+  row[G_PID - 1] = prod.id;
+  row[G_NAME - 1] = prod.name;
+  row[G_OPEN - 1] = new Date();
+  row[G_ROLLED - 1] = 0;
+  row[G_PRICE - 1] = prod.price || 0;
+  row[G_STATUS - 1] = POUCH_USING;
+  g.appendRow(row);
+  return { products: getProducts(), pouches: getPouches() };
+}
+
+// 這包用完 → 歸檔，記用完日（共捲支數＝已捲支數，每支成本＝售價/已捲支數，由前端算）
+function finishPouch(payload) {
+  var loc = findPouchRow_(payload.pouchId);
+  if (!loc) throw new Error('找不到菸草包');
+  loc.sheet.getRange(loc.row, G_STATUS).setValue(POUCH_DONE);
+  loc.sheet.getRange(loc.row, G_DONE).setValue(new Date());
+  return { products: getProducts(), pouches: getPouches() };
+}
+
+function getPouches() {
+  var s = sh(SHEET_POUCHES);
+  if (!s || s.getLastRow() < 2) return { using: [], done: [] };
+  var v = s.getRange(2, 1, s.getLastRow() - 1, POUCH_HEADERS.length).getValues();
+  var using = [], done = [];
+  v.forEach(function (row) {
+    if (String(row[G_ID - 1]).trim() === '') return;
+    var openD = row[G_OPEN - 1] instanceof Date ? row[G_OPEN - 1] : (row[G_OPEN - 1] ? new Date(row[G_OPEN - 1]) : null);
+    var doneD = row[G_DONE - 1] instanceof Date ? row[G_DONE - 1] : (row[G_DONE - 1] ? new Date(row[G_DONE - 1]) : null);
+    var rolled = Number(row[G_ROLLED - 1]) || 0;
+    var price = Number(row[G_PRICE - 1]) || 0;
+    var o = {
+      id: String(row[G_ID - 1]),
+      productId: String(row[G_PID - 1] || ''),
+      name: String(row[G_NAME - 1] || ''),
+      openStr: openD ? Utilities.formatDate(openD, TZ, 'M/d') : '',
+      doneStr: doneD ? Utilities.formatDate(doneD, TZ, 'M/d') : '',
+      rolled: rolled,
+      price: price,
+      perStick: (rolled > 0) ? Math.round(price / rolled * 10) / 10 : 0,
+      status: String(row[G_STATUS - 1] || '')
+    };
+    if (o.status === POUCH_DONE) done.push(o); else using.push(o);
+  });
+  done.reverse();
+  return { using: using, done: done.slice(0, 20) };
+}
+
+function findPouchRow_(id) {
+  var s = sh(SHEET_POUCHES);
+  if (!s || s.getLastRow() < 2) return null;
+  var ids = s.getRange(2, G_ID, s.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < ids.length; i++) if (String(ids[i][0]) === String(id)) return { sheet: s, row: i + 2 };
   return null;
 }

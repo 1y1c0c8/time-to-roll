@@ -126,6 +126,10 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
     <div id="pickArea">
       <div class="sect-title">菸品</div>
       <div id="prodChips" class="chips"></div>
+      <div id="pouchPickWrap" class="hide">
+        <div class="sect-title">使用中的菸草包</div>
+        <div id="pouchPick" class="chips"></div>
+      </div>
       <div class="sect-title">原因</div>
       <div id="reasonChips" class="chips"></div>
     </div>
@@ -143,12 +147,9 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
   </div></div></div>
 </section>
 
-<!-- ===== 庫存 (P2) ===== -->
+<!-- ===== 庫存 ===== -->
 <section id="viewinv" class="hide">
-  <div class="wrap"><div class="card"><div class="empty">
-    <i class="ti ti-box" style="font-size:26px;color:var(--muted)"></i><br><br>
-    庫存會在下一階段加上<br>剩餘量連動、買入、加熱菸彈／盒菸自動扣，捲菸每包「共捲幾支」統計
-  </div></div></div>
+  <div class="wrap" id="invWrap"></div>
 </section>
 
 <!-- ===== 設定 ===== -->
@@ -177,6 +178,10 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
     <div class="sheet-title">編輯這根</div>
     <div class="sect-title">菸品</div>
     <div id="editProd" class="chips"></div>
+    <div id="editPouchWrap" class="hide">
+      <div class="sect-title">菸草包</div>
+      <div id="editPouch" class="chips"></div>
+    </div>
     <div class="sect-title">原因</div>
     <div id="editReason" class="chips"></div>
     <button class="sheet-btn primary" onclick="saveEdit()">更新</button>
@@ -222,8 +227,23 @@ function localDateStr(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(
 function ago(ms){var s=(Date.now()-ms)/1000;if(s<90)return '剛剛';var m=s/60;if(m<60)return Math.floor(m)+' 分鐘前';var h=m/60;if(h<24)return Math.floor(h)+' 小時前';return Math.floor(h/24)+' 天前';}
 function catTag(c){return c==='加熱菸'?'加熱':c==='盒菸'?'盒菸':c==='捲菸'?'捲菸':'';}
 
-var S={settings:{cur:'NT$'},reasons:[],products:[],records:[],thisMonth:''};
-var selP=null, selR=null, editing=null, prodEditId=null;
+var S={settings:{cur:'NT$'},reasons:[],products:[],pouches:{using:[],done:[]},records:[],thisMonth:''};
+var selP=null, selR=null, selPouch=null, editing=null, prodEditId=null;
+
+function show(id,on){$(id).classList.toggle('hide',!on);}
+function findP(id){for(var i=0;i<S.products.length;i++)if(S.products[i].id===id)return S.products[i];return null;}
+function usingOf(pid){return ((S.pouches&&S.pouches.using)||[]).filter(function(g){return g.productId===pid;});}
+function isRollSel(){var p=findP(selP);return !!(p&&p.cat==='捲菸');}
+// 收到後端整包狀態就全刷新
+function applyState(st){
+  if(!st)return;
+  if(st.records)S.records=st.records;
+  if(st.products)S.products=st.products;
+  if(st.pouches)S.pouches=st.pouches;
+  if(selP&&!findP(selP))selP=(S.products[0]?S.products[0].id:null);
+  renderHero();renderProdChips();renderPouchPick();renderTodayList();renderInv();renderProdMgr();updateSaveBtn();
+  $('saveBtn').disabled=false;updateSaveBtn();
+}
 
 google.script.run.withSuccessHandler(onBoot).withFailureHandler(err).getBootData();
 
@@ -234,7 +254,7 @@ function onBoot(d){
   renderAll();
 }
 
-function renderAll(){renderHero();renderProdChips();renderReasonChips();renderTodayList();renderReasonMgr();renderProdMgr();updateSaveBtn();}
+function renderAll(){renderHero();renderProdChips();renderPouchPick();renderReasonChips();renderTodayList();renderInv();renderReasonMgr();renderProdMgr();updateSaveBtn();}
 
 function todayRecords(){var t=localDateStr(new Date());return S.records.filter(function(r){return r.dateStr===t;});}
 
@@ -252,7 +272,30 @@ function renderProdChips(){
     return '<button class="chip'+(p.id===selP?' on':'')+'" onclick="pickP(\''+p.id+'\')">'+esc(p.name)+'<span class="tag">'+catTag(p.cat)+'</span></button>';
   }).join('');
 }
-function pickP(id){selP=id;renderProdChips();updateSaveBtn();}
+function pickP(id){selP=id;selPouch=null;renderProdChips();renderPouchPick();updateSaveBtn();}
+
+function renderPouchPick(){
+  var roll=isRollSel();
+  show('pouchPickWrap',roll);
+  if(!roll){selPouch=null;return;}
+  var us=usingOf(selP);
+  if(selPouch&&!us.some(function(x){return x.id===selPouch;}))selPouch=null;
+  if(!selPouch&&us.length)selPouch=us[0].id;
+  var html=us.map(function(g){
+    return '<button class="chip'+(g.id===selPouch?' on':'')+'" onclick="pickPouch(\''+g.id+'\')">'+esc(g.name)+' · 已捲 '+g.rolled+'</button>';
+  }).join('');
+  html+='<button class="chip add" onclick="openPouchFor(\''+selP+'\')"><i class="ti ti-leaf"></i> Time to Roll · 開新包</button>';
+  if(!us.length)html='<div class="empty" style="padding:8px 0;text-align:left">這個口味還沒有使用中的菸草包，先開一包。</div>'+html;
+  $('pouchPick').innerHTML=html;
+}
+function pickPouch(id){selPouch=id;renderPouchPick();updateSaveBtn();}
+function openPouchFor(productId){
+  google.script.run.withSuccessHandler(function(st){
+    applyState(st);
+    if(selP===productId){var us=usingOf(productId);selPouch=us.length?us[us.length-1].id:null;renderPouchPick();updateSaveBtn();}
+    toast('開了新的一包');
+  }).withFailureHandler(err).openPouch({productId:productId});
+}
 
 function renderReasonChips(){
   var el=$('reasonChips');
@@ -262,7 +305,7 @@ function renderReasonChips(){
 }
 function pickR(n){selR=n;renderReasonChips();updateSaveBtn();}
 
-function updateSaveBtn(){$('saveBtn').disabled=!(selP&&selR);}
+function updateSaveBtn(){$('saveBtn').disabled=!(selP&&selR&&(!isRollSel()||selPouch));}
 
 function quickAddReason(){
   var n=prompt('新增原因');if(!n)return;
@@ -283,40 +326,48 @@ function renderTodayList(){
 
 function doSmoke(){
   if(!selP){toast('先選菸品');return;}
+  if(isRollSel()&&!selPouch){toast('先選或開一包菸草包');return;}
   if(!selR){toast('先選原因');return;}
   $('saveBtn').disabled=true;
-  google.script.run.withSuccessHandler(function(){toast('已記一根 ✓');reloadMonth();})
+  google.script.run.withSuccessHandler(function(st){toast('已記一根 ✓');applyState(st);})
     .withFailureHandler(function(e){$('saveBtn').disabled=false;err(e);})
-    .addSmoke({productId:selP,reason:selR});
-}
-function reloadMonth(){
-  google.script.run.withSuccessHandler(function(recs){S.records=recs;renderHero();renderTodayList();updateSaveBtn();})
-    .withFailureHandler(err).getMonthRecords(S.thisMonth);
+    .addSmoke({productId:selP,reason:selR,pouchId:isRollSel()?selPouch:''});
 }
 
 /* ---- edit a record ---- */
 function openEdit(id){
   var r=null;for(var i=0;i<S.records.length;i++)if(S.records[i].id===id){r=S.records[i];break;}
-  if(!r)return;editing={id:r.id,month:r.month,productId:r.productId,reason:r.reason};
+  if(!r)return;editing={id:r.id,month:r.month,productId:r.productId,reason:r.reason,pouchId:r.pouchId||''};
   renderEditChips();$('editSheet').classList.add('show');
 }
 function renderEditChips(){
   $('editProd').innerHTML=S.products.map(function(p){
     return '<button class="chip'+(p.id===editing.productId?' on':'')+'" onclick="editPickP(\''+p.id+'\')">'+esc(p.name)+'<span class="tag">'+catTag(p.cat)+'</span></button>';
   }).join('');
+  var ep=findP(editing.productId);var roll=!!(ep&&ep.cat==='捲菸');
+  show('editPouchWrap',roll);
+  if(roll){
+    var us=usingOf(editing.productId);var ids=us.map(function(x){return x.id;});
+    var all=us.slice();
+    if(editing.pouchId&&ids.indexOf(editing.pouchId)<0)all.push({id:editing.pouchId,name:'（原本那包）',rolled:''});
+    $('editPouch').innerHTML=all.map(function(g){
+      return '<button class="chip'+(g.id===editing.pouchId?' on':'')+'" onclick="editPickPouch(\''+g.id+'\')">'+esc(g.name)+(g.rolled!==''?' · 已捲 '+g.rolled:'')+'</button>';
+    }).join('')||'<div class="empty" style="padding:6px 0">沒有使用中的菸草包，先到庫存頁開一包。</div>';
+  }
   $('editReason').innerHTML=S.reasons.map(function(r){
     return '<button class="chip'+(r.name===editing.reason?' on':'')+'" onclick="editPickR(\''+esc(r.name)+'\')">'+esc(r.name)+'</button>';
   }).join('');
 }
-function editPickP(id){editing.productId=id;renderEditChips();}
+function editPickP(id){editing.productId=id;var p=findP(id);if(p&&p.cat==='捲菸'){var us=usingOf(id);editing.pouchId=us.length?us[0].id:(editing.pouchId||'');}else{editing.pouchId='';}renderEditChips();}
+function editPickPouch(id){editing.pouchId=id;renderEditChips();}
 function editPickR(n){editing.reason=n;renderEditChips();}
 function saveEdit(){
-  google.script.run.withSuccessHandler(function(){closeSheets();toast('已更新');reloadMonth();})
+  google.script.run.withSuccessHandler(function(st){closeSheets();toast('已更新');applyState(st);})
     .withFailureHandler(err).updateSmoke(editing);
 }
 function delEdit(){
-  if(!confirm('刪除這根紀錄？'))return;
-  google.script.run.withSuccessHandler(function(){closeSheets();toast('已刪除');reloadMonth();})
+  if(!confirm('刪除這根紀錄？庫存會加回去。'))return;
+  google.script.run.withSuccessHandler(function(st){closeSheets();toast('已刪除');applyState(st);})
     .withFailureHandler(err).deleteSmoke({id:editing.id,month:editing.month});
 }
 
@@ -381,11 +432,72 @@ function afterProdSave(setDef,cat,name){
     google.script.run.withSuccessHandler(function(ps){S.products=ps;finishProd();}).withFailureHandler(err).setDefaultProduct(prodEditId);
   }else{finishProd();}
 }
-function finishProd(){closeSheets();renderProdMgr();renderProdChips();if(selP==null&&S.products.length)selP=S.products[0].id;renderProdChips();updateSaveBtn();toast('已儲存');}
+function finishProd(){closeSheets();if(selP==null&&S.products.length)selP=S.products[0].id;renderProdMgr();renderProdChips();renderPouchPick();renderInv();updateSaveBtn();toast('已儲存');}
 function delProd(){
   if(!confirm('刪除這個菸品？歷史紀錄會保留。'))return;
-  google.script.run.withSuccessHandler(function(ps){S.products=ps;if(selP===prodEditId)selP=(ps[0]?ps[0].id:null);closeSheets();renderProdMgr();renderProdChips();updateSaveBtn();toast('已刪除');})
+  google.script.run.withSuccessHandler(function(ps){S.products=ps;if(selP===prodEditId)selP=(ps[0]?ps[0].id:null);closeSheets();renderProdMgr();renderProdChips();renderPouchPick();renderInv();updateSaveBtn();toast('已刪除');})
     .withFailureHandler(err).deleteProduct(prodEditId);
+}
+
+/* ---- 庫存 ---- */
+function renderInv(){
+  var el=$('invWrap');if(!el)return;
+  var cur=S.settings.cur||'';
+  var byCat=function(c){return S.products.filter(function(p){return p.cat===c;});};
+  var html='';
+  [['加熱菸','ti-flame'],['盒菸','ti-cigarette']].forEach(function(pair){
+    var list=byCat(pair[0]);
+    html+='<div class="sect-title"><i class="ti '+pair[1]+'"></i> '+pair[0]+'</div>';
+    if(!list.length){html+='<div class="card"><div class="empty">還沒有'+pair[0]+'</div></div>';return;}
+    html+='<div class="card">'+list.map(function(p){
+      var n=p.left||0,b=p.perBox||0;
+      var big=(b>0)?(Math.floor(n/b)+' 盒 '+(n%b)+' 支'):(n+' 支');
+      var col=(n<=0)?'var(--neg)':(n===1?'var(--warm)':'var(--accent)');
+      var sub=(n===1)?'<div style="font-size:12px;color:var(--warm);font-style:italic;font-family:\'Noto Serif TC\',serif">盒仔內賰尾枝</div>'
+        :(n<=0?'<div class="t2">沒了</div>':'<div class="t2">剩 '+n+' 支</div>');
+      var info=(b?b+' 支/盒':'')+(p.price?' · '+cur+p.price+'/盒':'');
+      return '<div class="row"><div class="mid"><div class="t1">'+esc(p.name)+'</div><div class="t2">'+esc(info)+'</div></div>'+
+        '<div style="text-align:right;margin-right:8px"><div class="t1 num" style="color:'+col+'">'+big+'</div>'+sub+'</div>'+
+        '<button class="mini" onclick="buyPrompt(\''+p.id+'\')">買入</button></div>';
+    }).join('')+'</div>';
+  });
+  var rolls=byCat('捲菸');
+  html+='<div class="sect-title"><i class="ti ti-leaf"></i> 捲菸菸草</div>';
+  if(!rolls.length){html+='<div class="card"><div class="empty">還沒有捲菸菸草</div></div>';}
+  else rolls.forEach(function(p){
+    html+='<div class="card" style="margin-bottom:10px">';
+    html+='<div class="row"><div class="mid"><div class="t1">'+esc(p.name)+'</div><div class="t2">'+(p.price?cur+p.price+'/包 · ':'')+'未開 '+(p.pouchesLeft||0)+' 包</div></div>'+
+      '<button class="mini" onclick="buyPrompt(\''+p.id+'\')">買入</button></div>';
+    usingOf(p.id).forEach(function(g){
+      html+='<div class="row" style="background:var(--bg)"><div class="mid"><div class="t2">這包已捲</div>'+
+        '<div class="num" style="color:var(--accent);font-weight:700;font-size:20px">'+g.rolled+' <span style="font-size:12px;color:var(--muted)">支</span></div></div>'+
+        '<button class="mini ghost" onclick="finishPouchDo(\''+g.id+'\')">這包用完</button></div>';
+    });
+    html+='<div style="padding:12px 14px"><button class="mini" style="width:100%;padding:11px" onclick="openPouchFor(\''+p.id+'\')"><i class="ti ti-leaf"></i> Time to Roll · 開新包</button></div>';
+    html+='</div>';
+  });
+  var done=(S.pouches&&S.pouches.done)||[];
+  if(done.length){
+    html+='<div class="sect-title">菸草歷史 · 已用完</div><div class="card">'+done.map(function(g){
+      return '<div class="row"><div class="mid"><div class="t1">'+esc(g.name)+'</div><div class="t2">'+g.openStr+'–'+g.doneStr+' · 共捲 '+g.rolled+' 支</div></div>'+
+        '<div class="rt num">'+(g.perStick?cur+g.perStick+'/支':'')+'</div></div>';
+    }).join('')+'</div>';
+  }
+  el.innerHTML=html;
+}
+function buyPrompt(id){
+  var p=findP(id);if(!p)return;
+  var unit=p.isStick?'盒':'包';
+  var q=prompt('買入「'+p.name+'」幾'+unit+'？');
+  if(q==null)return;q=parseInt(q,10);
+  if(!q||q<=0){toast('數量要大於 0');return;}
+  google.script.run.withSuccessHandler(function(st){applyState(st);toast('已買入 '+q+' '+unit);})
+    .withFailureHandler(err).buyStock({id:id,qty:q});
+}
+function finishPouchDo(pouchId){
+  if(!confirm('這包用完了？會歸檔並算出這包共捲幾支、每支成本。'))return;
+  google.script.run.withSuccessHandler(function(st){if(selPouch===pouchId)selPouch=null;applyState(st);toast('已歸檔');})
+    .withFailureHandler(err).finishPouch({pouchId:pouchId});
 }
 
 /* ---- tabs / sheets ---- */

@@ -12,14 +12,15 @@
 ```bash
 npm i -g @google/clasp
 clasp login                      # 用要放資料的那個 Google 帳號登入
-cp .clasp.json.example .clasp.json
 
 # 建一個新的試算表 + 綁定的 Apps Script 專案：
 clasp create --type sheets --title "Time to Roll" --rootDir src
-# ↑ 會自動把 scriptId 寫進 .clasp.json
+# ↑ 會自動產生 .clasp.json（含 scriptId、rootDir:"src"）
 
 clasp push                       # 上傳 src/ 的三個檔
 ```
+
+（`.clasp.json.example` 只是給別人自建時參考用，你自己跑 `clasp create` 會自動產生真正的 `.clasp.json`，它已被 gitignore。）
 
 接著在 Apps Script 編輯器裡：
 1. 執行一次 `setup()`（建立「設定／原因／菸品／菸草包」分頁與當月紀錄分頁）。
