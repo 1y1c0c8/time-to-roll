@@ -30,8 +30,9 @@
 ## Gotchas（沿用 LEDGER 血淚）
 - 日期樣字串寫進儲存格會被 Sheets 轉成 Date；要存字串旗標時 `setNumberFormat('@')` 並讀取時防禦。
 - 建 Date 用當地正午避免時區跨日；輸出用 `Utilities.formatDate(d, TZ, …)`。
-- 重用同一個部署 ID（`clasp deploy -i …`）→ `/exec` 網址不變。
+- 重用同一個部署 ID（v3：`clasp redeploy <id>`）→ `/exec` 網址不變。`/dev` 拿來當主畫面 App 不穩（要編輯者登入 session，私密瀏覽會壞），已放棄。
 - 私有 GAS web app 沒辦法設主畫面自訂圖示（沙盒 iframe），iOS 會用標題首字母字塊。
 
-## 部署 = 雙推
-`clasp push` → `clasp deploy -i <id>`（更新 Google web app）**且** `git push`（GitHub）。或 `./update.sh`。
+## 部署（clasp v3！）
+手機主畫面用 **`/exec`（版本化部署）**，不是 `/dev`。更新兩步：`clasp push` → **`clasp redeploy <部署ID>`**（v3 把舊的 `clasp deploy -i` 改名成 `redeploy`／`update-deployment`；`deploy`／`create-deployment` 會建**新**部署＋新網址，別用）。沿用同一個部署 ID → `/exec` 不變，iPhone 關掉重開即新版。部署 ID 用 `clasp list-deployments` 看非 `@HEAD` 那筆。懶人版：`./update.sh`。GitHub `git push` 只是備份，與 App 更新無關（目前無 remote）。
+本專案正式部署 ID：`AKfycbwYAfBwEjLlBgh4az8aLF7ldu6wUZ04vAUkioVO5ilrhUtUoxkwvG9cjvQfsHyuIWEG`。

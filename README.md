@@ -27,15 +27,17 @@ clasp push                       # 上傳 src/ 的三個檔
 2. 部署 → 新增部署 → 網頁應用程式 → 執行身分「我」、存取權「僅限我自己」→ 記下 `/exec` 網址與部署 ID。
 3. iPhone Safari 開 `/exec` → 分享 → 加入主畫面。
 
-## 每次改程式（雙推）
+## 每次改程式（clasp v3）
 
 ```bash
 clasp push
-clasp deploy -i <你的部署ID>     # 重用同一個部署 ID，/exec 網址才不會變
-git push
+clasp redeploy <你的部署ID>      # v3：redeploy＝更新既有部署；/exec 網址不變
 ```
 
-或直接 `./update.sh`（會自動抓非 @HEAD 的部署 ID 重新部署）。
+- 部署 ID 用 `clasp list-deployments` 看非 `@HEAD` 那筆（`AKfyc…`）。
+- ⚠️ v3 的 `clasp deploy`（＝`create-deployment`）會建**新**部署＋新網址，別用來更新。
+- 懶人版：`./update.sh`（自動抓非 @HEAD 的部署 ID 並 `redeploy`）。
+- 更新後 iPhone 主畫面 App 完全關掉再重開即新版。`git push` 只是備份、與 App 無關。
 
 ## 資料模型
 
