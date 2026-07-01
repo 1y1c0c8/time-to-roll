@@ -239,6 +239,29 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
   </div>
 </div>
 
+<!-- 庫存編輯 -->
+<div class="overlay" id="invSheet" onclick="if(event.target===this)closeSheets()">
+  <div class="sheet">
+    <div class="grip"></div>
+    <div class="sheet-title" id="invSheetTitle">庫存</div>
+    <button class="sheet-btn edit" id="invBuyBtn" onclick="invBuy()">買入</button>
+    <button class="sheet-btn edit" id="invSetBtn" onclick="invSet()">設定剩餘</button>
+    <button class="sheet-btn cancel" onclick="closeSheets()">取消</button>
+  </div>
+</div>
+
+<!-- 菸草包動作 -->
+<div class="overlay" id="pouchSheet" onclick="if(event.target===this)closeSheets()">
+  <div class="sheet">
+    <div class="grip"></div>
+    <div class="sheet-title" id="pouchSheetTitle">菸草包</div>
+    <button class="sheet-btn edit" onclick="pouchSetRolled()">設定已捲支數</button>
+    <button class="sheet-btn primary" onclick="pouchFinish()">這包用完</button>
+    <button class="sheet-btn del" onclick="pouchDelete()">刪除這包</button>
+    <button class="sheet-btn cancel" onclick="closeSheets()">取消</button>
+  </div>
+</div>
+
 <div class="save">
   <button id="saveBtn" onclick="doSmoke()">記一根</button>
 </div>
@@ -403,10 +426,16 @@ function delEdit(){
 function renderReasonMgr(){
   var el=$('reasonMgr');
   var rows=S.reasons.map(function(r){
-    return '<div class="row"><div class="mid"><div class="t1">'+esc(r.name)+'</div></div>'+
+    return '<div class="row"><div class="mid tap" onclick="editReasonName(\''+esc(r.name)+'\')"><div class="t1">'+esc(r.name)+' <i class="ti ti-pencil" style="font-size:12px;color:var(--muted)"></i></div></div>'+
       '<button class="x" onclick="rmReason(\''+esc(r.name)+'\')"><i class="ti ti-x"></i></button></div>';
   }).join('');
   el.innerHTML=rows+'<div class="add-row"><input id="newReason" placeholder="新增原因" onkeydown="if(event.key===\'Enter\')addReasonMgr()"><button onclick="addReasonMgr()">加入</button></div>';
+}
+function editReasonName(old){
+  var n=prompt('修改原因（會一併更新歷史紀錄）',old);
+  if(n==null)return; n=n.trim(); if(!n||n===old)return;
+  google.script.run.withSuccessHandler(function(rs){S.reasons=rs;if(selR===old)selR=n;renderReasonMgr();renderReasonChips();updateSaveBtn();toast('已更新');})
+    .withFailureHandler(err).renameReason(old,n);
 }
 function addReasonMgr(){
   var v=$('newReason').value;if(!v.trim())return;
@@ -484,9 +513,9 @@ function renderInv(){
       var sub=(n===1)?'<div style="font-size:12px;color:var(--warm);font-style:italic;font-family:\'Noto Serif TC\',serif">盒仔內賰尾枝</div>'
         :(n<=0?'<div class="t2">沒了</div>':'<div class="t2">剩 '+n+' 支</div>');
       var info=(b?b+' 支/盒':'')+(p.price?' · '+cur+p.price+'/盒':'');
-      return '<div class="row"><div class="mid"><div class="t1">'+esc(p.name)+'</div><div class="t2">'+esc(info)+'</div></div>'+
-        '<div style="text-align:right;margin-right:8px"><div class="t1 num" style="color:'+col+'">'+big+'</div>'+sub+'</div>'+
-        '<button class="mini" onclick="buyPrompt(\''+p.id+'\')">買入</button></div>';
+      return '<div class="row tap" onclick="openInvSheet(\''+p.id+'\')"><div class="mid"><div class="t1">'+esc(p.name)+'</div><div class="t2">'+esc(info)+'</div></div>'+
+        '<div style="text-align:right;margin-right:6px"><div class="t1 num" style="color:'+col+'">'+big+'</div>'+sub+'</div>'+
+        '<i class="ti ti-chevron-right" style="color:var(--muted)"></i></div>';
     }).join('')+'</div>';
   });
   var rolls=byCat('捲菸');
@@ -494,12 +523,12 @@ function renderInv(){
   if(!rolls.length){html+='<div class="card"><div class="empty">還沒有捲菸菸草</div></div>';}
   else rolls.forEach(function(p){
     html+='<div class="card" style="margin-bottom:10px">';
-    html+='<div class="row"><div class="mid"><div class="t1">'+esc(p.name)+'</div><div class="t2">'+(p.price?cur+p.price+'/包 · ':'')+'未開 '+(p.pouchesLeft||0)+' 包</div></div>'+
-      '<button class="mini" onclick="buyPrompt(\''+p.id+'\')">買入</button></div>';
+    html+='<div class="row tap" onclick="openInvSheet(\''+p.id+'\')"><div class="mid"><div class="t1">'+esc(p.name)+'</div><div class="t2">'+(p.price?cur+p.price+'/包 · ':'')+'未開 '+(p.pouchesLeft||0)+' 包</div></div>'+
+      '<i class="ti ti-chevron-right" style="color:var(--muted)"></i></div>';
     usingOf(p.id).forEach(function(g){
-      html+='<div class="row" style="background:var(--bg)"><div class="mid"><div class="t2">這包已捲</div>'+
+      html+='<div class="row tap" style="background:var(--bg)" onclick="openPouchSheet(\''+g.id+'\')"><div class="mid"><div class="t2">這包已捲</div>'+
         '<div class="num" style="color:var(--accent);font-weight:700;font-size:20px">'+g.rolled+' <span style="font-size:12px;color:var(--muted)">支</span></div></div>'+
-        '<button class="mini ghost" onclick="finishPouchDo(\''+g.id+'\')">這包用完</button></div>';
+        '<i class="ti ti-chevron-right" style="color:var(--muted)"></i></div>';
     });
     html+='<div style="padding:12px 14px"><button class="mini" style="width:100%;padding:11px" onclick="openPouchFor(\''+p.id+'\')"><i class="ti ti-leaf"></i> Time to Roll · 開新包</button></div>';
     html+='</div>';
@@ -526,6 +555,44 @@ function finishPouchDo(pouchId){
   if(!confirm('這包用完了？會歸檔並算出這包共捲幾支、每支成本。'))return;
   google.script.run.withSuccessHandler(function(st){if(selPouch===pouchId)selPouch=null;applyState(st);toast('已歸檔');})
     .withFailureHandler(err).finishPouch({pouchId:pouchId});
+}
+
+/* ---- 庫存編輯（買入 / 設定剩餘） ---- */
+var invEditId=null, pouchEditId=null;
+function openInvSheet(id){
+  var p=findP(id);if(!p)return;invEditId=id;
+  $('invSheetTitle').textContent=p.name;
+  $('invBuyBtn').textContent=p.isStick?'買入（＋盒）':'買入（＋包）';
+  $('invSetBtn').textContent=p.isStick?'設定剩餘支數（半盒也行）':'設定未開包數';
+  $('invSheet').classList.add('show');
+}
+function invBuy(){var id=invEditId;closeSheets();buyPrompt(id);}
+function invSet(){
+  var p=findP(invEditId);if(!p)return;var id=invEditId;closeSheets();
+  var cur=p.isStick?p.left:(p.pouchesLeft||0);
+  var unit=p.isStick?'支':'包';
+  var q=prompt('直接設定「'+p.name+'」目前剩餘'+unit+'（例：半盒加熱菸就填實際支數）',cur);
+  if(q==null)return;q=parseInt(q,10);
+  if(isNaN(q)||q<0){toast('要填 0 以上的數字');return;}
+  google.script.run.withSuccessHandler(function(st){applyState(st);toast('已更新');})
+    .withFailureHandler(err).setStock({id:id,value:q});
+}
+function findPouch(id){var u=(S.pouches&&S.pouches.using)||[];for(var i=0;i<u.length;i++)if(u[i].id===id)return u[i];return null;}
+function openPouchSheet(id){var g=findPouch(id);pouchEditId=id;$('pouchSheetTitle').textContent=(g?g.name:'菸草包')+(g?' · 已捲 '+g.rolled+' 支':'');$('pouchSheet').classList.add('show');}
+function pouchSetRolled(){
+  var g=findPouch(pouchEditId);var id=pouchEditId;closeSheets();
+  var q=prompt('設定「'+(g?g.name:'')+'」這包已捲支數（修正／半包）',g?g.rolled:0);
+  if(q==null)return;q=parseInt(q,10);
+  if(isNaN(q)||q<0){toast('要填 0 以上的數字');return;}
+  google.script.run.withSuccessHandler(function(st){applyState(st);toast('已更新');})
+    .withFailureHandler(err).updatePouch({pouchId:id,rolled:q});
+}
+function pouchFinish(){var id=pouchEditId;closeSheets();finishPouchDo(id);}
+function pouchDelete(){
+  if(!confirm('刪除這包菸草包？（已記的捲菸紀錄不會變動）'))return;
+  var id=pouchEditId;closeSheets();
+  google.script.run.withSuccessHandler(function(st){if(selPouch===id)selPouch=null;applyState(st);toast('已刪除');})
+    .withFailureHandler(err).deletePouch({pouchId:id});
 }
 
 /* ---- 統計 ---- */

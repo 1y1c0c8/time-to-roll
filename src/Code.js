@@ -339,23 +339,38 @@ function addReason(name) {
   return getReasons();
 }
 
+// 硬刪除：整列移除、下面自動上移（歷史紀錄存名稱快照，不受影響）
 function deleteReason(name) {
   var s = sh(SHEET_REASONS);
   if (!s || s.getLastRow() < 2) return getReasons();
   var v = s.getRange(2, 1, s.getLastRow() - 1, 1).getValues();
   for (var i = 0; i < v.length; i++)
-    if (String(v[i][0]).trim() === String(name).trim()) s.getRange(i + 2, RS_ACTIVE).setValue(false);
+    if (String(v[i][0]).trim() === String(name).trim()) { s.deleteRow(i + 2); break; }
   return getReasons();
 }
 
 function renameReason(oldName, newName) {
   newName = String(newName || '').trim();
+  oldName = String(oldName || '').trim();
   if (!newName) throw new Error('名稱不能空白');
+  if (newName === oldName) return getReasons();
   var s = sh(SHEET_REASONS);
   var v = s.getRange(2, 1, s.getLastRow() - 1, 1).getValues();
   for (var i = 0; i < v.length; i++)
-    if (String(v[i][0]).trim() === String(oldName).trim()) s.getRange(i + 2, RS_NAME).setValue(newName);
+    if (String(v[i][0]).trim() === oldName) s.getRange(i + 2, RS_NAME).setValue(newName);
+  renameReasonInHistory_(oldName, newName);   // 回溯改歷史，統計才不會分裂
   return getReasons();
+}
+function renameReasonInHistory_(oldName, newName) {
+  ss().getSheets().forEach(function (sheet) {
+    if (!/^\d{4}-\d{2}$/.test(sheet.getName())) return;
+    var last = sheet.getLastRow();
+    if (last < 2) return;
+    var rng = sheet.getRange(2, R_REASON, last - 1, 1), vals = rng.getValues(), changed = false;
+    for (var i = 0; i < vals.length; i++)
+      if (String(vals[i][0]) === oldName) { vals[i][0] = newName; changed = true; }
+    if (changed) rng.setValues(vals);
+  });
 }
 
 /* ------------------------------------------------------------------ 菸品 CRUD */
@@ -393,10 +408,40 @@ function updateProduct(p) {
   return getProducts();
 }
 
+// 硬刪除菸品整列；順手刪掉它「使用中」的菸草包（保留已用完的歷史）
 function deleteProduct(id) {
   var loc = findProductRow_(id);
-  if (loc) loc.sheet.getRange(loc.row, P_STATUS).setValue('停用');
+  if (loc) loc.sheet.deleteRow(loc.row);
+  var g = sh(SHEET_POUCHES);
+  if (g && g.getLastRow() >= 2) {
+    for (var r = g.getLastRow(); r >= 2; r--)
+      if (String(g.getRange(r, G_PID).getValue()) === String(id) && String(g.getRange(r, G_STATUS).getValue()) === POUCH_USING)
+        g.deleteRow(r);
+  }
   return getProducts();
+}
+
+// 直接設定剩餘量（半盒／修正）：stick→剩餘支數；捲菸→未開包數
+function setStock(payload) {
+  var prod = findProductById_(payload.id);
+  if (!prod) throw new Error('找不到菸品');
+  var loc = findProductRow_(prod.id);
+  var val = Math.max(0, Math.floor(Number(payload.value) || 0));
+  loc.sheet.getRange(loc.row, prod.isStick ? P_LEFT : P_POUCHES).setValue(val);
+  return { products: getProducts(), pouches: getPouches() };
+}
+
+// 修正使用中菸草包的已捲支數 / 刪除一包（開錯）
+function updatePouch(payload) {
+  var loc = findPouchRow_(payload.pouchId);
+  if (!loc) throw new Error('找不到菸草包');
+  if (payload.rolled != null) loc.sheet.getRange(loc.row, G_ROLLED).setValue(Math.max(0, Math.floor(Number(payload.rolled) || 0)));
+  return { products: getProducts(), pouches: getPouches() };
+}
+function deletePouch(payload) {
+  var loc = findPouchRow_(payload.pouchId);
+  if (loc) loc.sheet.deleteRow(loc.row);
+  return { products: getProducts(), pouches: getPouches() };
 }
 
 function setDefaultProduct(id) {
