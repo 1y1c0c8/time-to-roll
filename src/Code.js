@@ -565,50 +565,69 @@ function findPouchRow_(id) {
 
 /* ------------------------------------------------------------------ 統計 (P3) */
 
-// gran: 'day' | 'week' | 'month' | 'year'
-function getStats(gran) {
+// gran: 'day'|'week'|'month'|'year'；key: 指定期間（日/週=yyyy-MM-dd、月=yyyy-MM、年=yyyy）
+// 回傳「該期間」的細分長條（日→24小時、週→7天、月→當月每天、年→12月）＋原因/時段分佈
+function getStats(gran, key) {
   ensureReady_();
-  var now = new Date(), start, n;
-  if (gran === 'week') { start = addDays_(mondayOf_(now), -7 * 11); n = 12; }
-  else if (gran === 'month') { start = firstOfMonth_(addMonths_(now, -11)); n = 12; }
-  else if (gran === 'year') { start = new Date(now.getFullYear() - 4, 0, 1, 12, 0, 0); n = 5; }
-  else { gran = 'day'; start = addDays_(now, -29); n = 30; }
+  var now = new Date();
+  var start, end, buckets = [], bucketOf, maWin = 0, rangeLabel = '';
 
-  // 產生有序的桶（含空桶，才畫得出 0 的日子）
-  var buckets = [], index = {};
-  for (var i = 0; i < n; i++) {
-    var d, key, label;
-    if (gran === 'day') { d = addDays_(start, i); key = fmt_(d, 'yyyy-MM-dd'); label = fmt_(d, 'M/d'); }
-    else if (gran === 'week') { d = addDays_(start, 7 * i); key = fmt_(d, 'yyyy-MM-dd'); label = fmt_(d, 'M/d'); }
-    else if (gran === 'month') { d = addMonths_(start, i); key = fmt_(d, 'yyyy-MM'); label = fmt_(d, 'M月'); }
-    else { var y = now.getFullYear() - 4 + i; key = String(y); label = String(y); }
-    index[key] = i;
-    buckets.push({ count: 0, label: label });
+  if (gran === 'day') {
+    if (!key || key.length !== 10) key = fmt_(now, 'yyyy-MM-dd');
+    var d0 = parseYmd_(key);
+    start = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate(), 0, 0, 0);
+    end = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate(), 23, 59, 59);
+    for (var h = 0; h < 24; h++) buckets.push({ count: 0, label: h + '時' });
+    bucketOf = function (d) { return d.getHours(); };
+    rangeLabel = fmt_(d0, 'yyyy/MM/dd');
+  } else if (gran === 'week') {
+    if (!key || key.length !== 10) key = fmt_(now, 'yyyy-MM-dd');
+    var mon = mondayOf_(parseYmd_(key));
+    start = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate(), 0, 0, 0);
+    var sun = addDays_(mon, 6);
+    end = new Date(sun.getFullYear(), sun.getMonth(), sun.getDate(), 23, 59, 59);
+    for (var i = 0; i < 7; i++) buckets.push({ count: 0, label: fmt_(addDays_(mon, i), 'M/d') });
+    bucketOf = function (d) { return Math.floor((dateOnly_(d) - dateOnly_(mon)) / 86400000); };
+    rangeLabel = fmt_(mon, 'M/d') + '–' + fmt_(sun, 'M/d');
+  } else if (gran === 'month') {
+    if (!key || key.length !== 7) key = fmt_(now, 'yyyy-MM');
+    var y = +key.slice(0, 4), m = +key.slice(5, 7) - 1;
+    start = new Date(y, m, 1, 0, 0, 0); end = new Date(y, m + 1, 0, 23, 59, 59);
+    for (var dd = 1; dd <= end.getDate(); dd++) buckets.push({ count: 0, label: '' + dd });
+    bucketOf = function (d) { return d.getDate() - 1; };
+    maWin = 7; rangeLabel = key;
+  } else {
+    gran = 'year';
+    if (!key || key.length !== 4) key = String(now.getFullYear());
+    var yy = +key;
+    start = new Date(yy, 0, 1, 0, 0, 0); end = new Date(yy, 11, 31, 23, 59, 59);
+    for (var mo = 0; mo < 12; mo++) buckets.push({ count: 0, label: (mo + 1) + '月' });
+    bucketOf = function (d) { return d.getMonth(); };
+    maWin = 3; rangeLabel = key;
   }
 
-  var recs = readRecordsSince_(start);
+  var recs = readRecordsBetween_(start, end);
   var reason = {}, hours = [0, 0, 0, 0], total = 0;
   recs.forEach(function (r) {
     var d = new Date(r.time);
-    var k = bucketKey_(d, gran);
-    if (index[k] != null) buckets[index[k]].count++;
+    var bi = bucketOf(d);
+    if (bi >= 0 && bi < buckets.length) buckets[bi].count++;
     total++;
     var rn = r.reason || '（無原因）';
     reason[rn] = (reason[rn] || 0) + 1;
     hours[hourGroup_(d)]++;
   });
 
-  var win = (gran === 'day') ? 7 : (gran === 'week') ? 4 : (gran === 'month') ? 3 : 0;
+  var days = Math.max(1, Math.round((dateOnly_(end) - dateOnly_(start)) / 86400000) + 1);
   var reasons = Object.keys(reason).map(function (k) { return { name: k, count: reason[k] }; })
     .sort(function (a, b) { return b.count - a.count; });
-  var days = Math.max(1, Math.round((now.getTime() - start.getTime()) / 86400000) + 1);
 
   return {
-    gran: gran,
+    gran: gran, key: key, rangeLabel: rangeLabel,
     labels: buckets.map(function (b) { return b.label; }),
     counts: buckets.map(function (b) { return b.count; }),
-    ma: movingAvg_(buckets.map(function (b) { return b.count; }), win),
-    maWindow: win,
+    ma: movingAvg_(buckets.map(function (b) { return b.count; }), maWin),
+    maWindow: maWin,
     reasons: reasons,
     hourGroups: [
       { k: '早上 5–11', v: hours[0] }, { k: '下午 11–17', v: hours[1] },
@@ -649,11 +668,13 @@ function movingAvg_(arr, win) {
   }
   return out;
 }
-function readRecordsSince_(start) {
-  var out = [], keys = monthKeysBetween_(start, new Date());
+function parseYmd_(s) { var a = String(s).split('-'); return new Date(+a[0], +a[1] - 1, +a[2], 12, 0, 0); }
+function dateOnly_(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); }
+function readRecordsBetween_(start, end) {
+  var out = [], keys = monthKeysBetween_(start, end), s = start.getTime(), e = end.getTime();
   keys.forEach(function (k) {
     var recs = getMonthRecords(k);
-    for (var i = 0; i < recs.length; i++) if (recs[i].time >= start.getTime()) out.push(recs[i]);
+    for (var i = 0; i < recs.length; i++) if (recs[i].time >= s && recs[i].time <= e) out.push(recs[i]);
   });
   return out;
 }

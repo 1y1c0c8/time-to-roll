@@ -165,11 +165,16 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
 <section id="viewstat" class="hide">
   <div class="wrap">
     <div class="seg" id="statSeg">
-      <button data-g="day" class="active" onclick="loadStats('day')">日</button>
-      <button data-g="week" onclick="loadStats('week')">週</button>
-      <button data-g="month" onclick="loadStats('month')">月</button>
-      <button data-g="year" onclick="loadStats('year')">年</button>
+      <button data-g="day" onclick="setGran('day')">日</button>
+      <button data-g="week" onclick="setGran('week')">週</button>
+      <button data-g="month" class="active" onclick="setGran('month')">月</button>
+      <button data-g="year" onclick="setGran('year')">年</button>
     </div>
+    <div class="card field" id="pickerField" style="border-top:0;border-radius:var(--r);margin-bottom:6px">
+      <label id="pickerLabel">月份</label>
+      <span id="pickerSlot" style="flex:1;text-align:right"></span>
+    </div>
+    <div id="statRange" style="text-align:center;font-size:12px;color:var(--muted);margin:0 4px 12px"></div>
     <div class="card sum" id="statSum"></div>
     <div class="sect-title">趨勢</div>
     <div class="card" style="padding:12px 10px"><div style="height:220px"><canvas id="trendChart"></canvas></div></div>
@@ -610,13 +615,26 @@ function pouchDelete(){
 }
 
 /* ---- 統計 ---- */
-var statGran='day', trendChart=null;
-function loadStats(g){
+var statGran='month', statKey='', trendChart=null;
+function setGran(g){
   statGran=g;
   document.querySelectorAll('#statSeg button').forEach(function(b){b.classList.toggle('active',b.dataset.g===g);});
-  google.script.run.withSuccessHandler(renderStats).withFailureHandler(err).getStats(g);
+  var now=new Date(),p=function(n){return n<10?'0'+n:''+n;};
+  var today=now.getFullYear()+'-'+p(now.getMonth()+1)+'-'+p(now.getDate());
+  var lbl=$('pickerLabel'),slot=$('pickerSlot');
+  if(g==='day'){lbl.textContent='日期';if(!statKey||statKey.length!==10)statKey=today;slot.innerHTML='<input type="date" id="statPicker" value="'+statKey+'">';}
+  else if(g==='week'){lbl.textContent='週（選週內任一天）';if(!statKey||statKey.length!==10)statKey=today;slot.innerHTML='<input type="date" id="statPicker" value="'+statKey+'">';}
+  else if(g==='month'){lbl.textContent='月份';if(!statKey||statKey.length!==7)statKey=now.getFullYear()+'-'+p(now.getMonth()+1);slot.innerHTML='<input type="month" id="statPicker" value="'+statKey+'">';}
+  else{lbl.textContent='年份';if(!statKey||statKey.length!==4)statKey=String(now.getFullYear());var ys=[];for(var i=0;i<6;i++)ys.push(now.getFullYear()-i);if(ys.indexOf(+statKey)<0)ys.unshift(+statKey);slot.innerHTML='<select id="statPicker">'+ys.map(function(y){return '<option value="'+y+'"'+(String(y)===statKey?' selected':'')+'>'+y+'</option>';}).join('')+'</select>';}
+  $('statPicker').onchange=function(){statKey=$('statPicker').value;doLoadStats();};
+  doLoadStats();
+}
+function doLoadStats(){
+  google.script.run.withSuccessHandler(renderStats).withFailureHandler(err).getStats(statGran,statKey);
 }
 function renderStats(d){
+  statKey=d.key;
+  $('statRange').textContent=d.rangeLabel||'';
   $('statSum').innerHTML=
     '<div><div class="k">這段期間</div><div class="v num">'+d.total+' 支</div></div>'+
     '<div><div class="k">平均每天</div><div class="v num">'+d.perDay+' 支</div></div>';
@@ -664,7 +682,7 @@ function showTab(v){
   ['log','stat','inv','set'].forEach(function(k){$('view'+k).classList.toggle('hide',k!==v);});
   document.querySelectorAll('.tabbar button').forEach(function(b){b.classList.toggle('active',b.dataset.v===v);});
   $('saveBtn').parentElement.classList.toggle('hide',v!=='log');
-  if(v==='stat')loadStats(statGran);
+  if(v==='stat')setGran(statGran);
 }
 function closeSheets(){document.querySelectorAll('.overlay').forEach(function(o){o.classList.remove('show');});}
 </script>
