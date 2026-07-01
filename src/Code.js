@@ -506,3 +506,106 @@ function findPouchRow_(id) {
   for (var i = 0; i < ids.length; i++) if (String(ids[i][0]) === String(id)) return { sheet: s, row: i + 2 };
   return null;
 }
+
+/* ------------------------------------------------------------------ 統計 (P3) */
+
+// gran: 'day' | 'week' | 'month' | 'year'
+function getStats(gran) {
+  ensureReady_();
+  var now = new Date(), start, n;
+  if (gran === 'week') { start = addDays_(mondayOf_(now), -7 * 11); n = 12; }
+  else if (gran === 'month') { start = firstOfMonth_(addMonths_(now, -11)); n = 12; }
+  else if (gran === 'year') { start = new Date(now.getFullYear() - 4, 0, 1, 12, 0, 0); n = 5; }
+  else { gran = 'day'; start = addDays_(now, -29); n = 30; }
+
+  // 產生有序的桶（含空桶，才畫得出 0 的日子）
+  var buckets = [], index = {};
+  for (var i = 0; i < n; i++) {
+    var d, key, label;
+    if (gran === 'day') { d = addDays_(start, i); key = fmt_(d, 'yyyy-MM-dd'); label = fmt_(d, 'M/d'); }
+    else if (gran === 'week') { d = addDays_(start, 7 * i); key = fmt_(d, 'yyyy-MM-dd'); label = fmt_(d, 'M/d'); }
+    else if (gran === 'month') { d = addMonths_(start, i); key = fmt_(d, 'yyyy-MM'); label = fmt_(d, 'M月'); }
+    else { var y = now.getFullYear() - 4 + i; key = String(y); label = String(y); }
+    index[key] = i;
+    buckets.push({ count: 0, label: label });
+  }
+
+  var recs = readRecordsSince_(start);
+  var reason = {}, hours = [0, 0, 0, 0], total = 0;
+  recs.forEach(function (r) {
+    var d = new Date(r.time);
+    var k = bucketKey_(d, gran);
+    if (index[k] != null) buckets[index[k]].count++;
+    total++;
+    var rn = r.reason || '（無原因）';
+    reason[rn] = (reason[rn] || 0) + 1;
+    hours[hourGroup_(d)]++;
+  });
+
+  var win = (gran === 'day') ? 7 : (gran === 'week') ? 4 : (gran === 'month') ? 3 : 0;
+  var reasons = Object.keys(reason).map(function (k) { return { name: k, count: reason[k] }; })
+    .sort(function (a, b) { return b.count - a.count; });
+  var days = Math.max(1, Math.round((now.getTime() - start.getTime()) / 86400000) + 1);
+
+  return {
+    gran: gran,
+    labels: buckets.map(function (b) { return b.label; }),
+    counts: buckets.map(function (b) { return b.count; }),
+    ma: movingAvg_(buckets.map(function (b) { return b.count; }), win),
+    maWindow: win,
+    reasons: reasons,
+    hourGroups: [
+      { k: '早上 5–11', v: hours[0] }, { k: '下午 11–17', v: hours[1] },
+      { k: '晚上 17–23', v: hours[2] }, { k: '深夜 23–5', v: hours[3] }
+    ],
+    total: total,
+    perDay: Math.round(total / days * 10) / 10
+  };
+}
+
+function fmt_(d, f) { return Utilities.formatDate(d, TZ, f); }
+function addDays_(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n, 12, 0, 0); }
+function addMonths_(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1, 12, 0, 0); }
+function firstOfMonth_(d) { return new Date(d.getFullYear(), d.getMonth(), 1, 12, 0, 0); }
+function mondayOf_(d) { return addDays_(d, -(((d.getDay()) + 6) % 7)); }  // getDay: 0=Sun
+
+function bucketKey_(d, gran) {
+  if (gran === 'week') return fmt_(mondayOf_(d), 'yyyy-MM-dd');
+  if (gran === 'month') return fmt_(d, 'yyyy-MM');
+  if (gran === 'year') return fmt_(d, 'yyyy');
+  return fmt_(d, 'yyyy-MM-dd');
+}
+function hourGroup_(d) {
+  var h = d.getHours();
+  if (h >= 5 && h <= 10) return 0;
+  if (h >= 11 && h <= 16) return 1;
+  if (h >= 17 && h <= 22) return 2;
+  return 3;
+}
+function movingAvg_(arr, win) {
+  if (!win || win < 2) return [];
+  var out = [];
+  for (var i = 0; i < arr.length; i++) {
+    if (i < win - 1) { out.push(null); continue; }
+    var s = 0;
+    for (var j = i - win + 1; j <= i; j++) s += arr[j];
+    out.push(Math.round(s / win * 10) / 10);
+  }
+  return out;
+}
+function readRecordsSince_(start) {
+  var out = [], keys = monthKeysBetween_(start, new Date());
+  keys.forEach(function (k) {
+    var recs = getMonthRecords(k);
+    for (var i = 0; i < recs.length; i++) if (recs[i].time >= start.getTime()) out.push(recs[i]);
+  });
+  return out;
+}
+function monthKeysBetween_(a, b) {
+  var out = [], y = a.getFullYear(), m = a.getMonth(), ey = b.getFullYear(), em = b.getMonth();
+  while (y < ey || (y === ey && m <= em)) {
+    out.push(fmt_(new Date(y, m, 1, 12, 0, 0), 'yyyy-MM'));
+    m++; if (m > 11) { m = 0; y++; }
+  }
+  return out;
+}

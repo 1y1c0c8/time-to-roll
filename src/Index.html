@@ -5,6 +5,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Time to Roll">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
 :root{
   --bg:#f4f3ef; --card:#ffffff; --ink:#1c1b18; --muted:#8a877f;
@@ -59,6 +60,22 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
 .row .x{border:0;background:transparent;color:var(--neg);font-size:20px;cursor:pointer;padding:4px 6px}
 .empty{padding:28px 16px;text-align:center;color:var(--muted);font-size:14px;line-height:1.6}
 .hide{display:none!important}
+
+/* segmented control (統計期間) */
+.seg{display:flex;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px;gap:4px;box-shadow:var(--shadow);margin:8px 0 14px}
+.seg button{flex:1;border:0;background:transparent;color:var(--muted);padding:10px 0;border-radius:10px;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer}
+.seg button.active{background:var(--accent-soft);color:var(--accent)}
+/* metric row */
+.sum{display:flex;padding:16px;gap:8px}
+.sum>div{flex:1;text-align:center}
+.sum .k{font-size:12px;color:var(--muted);font-weight:600}
+.sum .v{font-family:"Manrope";font-weight:800;font-size:22px;margin-top:3px}
+/* horizontal bar row (原因/時段) */
+.barrow{padding:11px 14px;border-top:1px solid var(--line)}
+.barrow:first-child{border-top:0}
+.barrow .lab{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;font-weight:600;margin-bottom:6px}
+.barrow .track{height:8px;background:var(--bg);border-radius:999px;overflow:hidden}
+.barrow .fill{height:100%;background:var(--accent);border-radius:999px}
 
 .save{position:fixed;left:0;right:0;bottom:0;z-index:30;max-width:560px;margin:0 auto;
   padding:12px 16px max(14px,env(safe-area-inset-bottom));background:linear-gradient(transparent,var(--bg) 28%)}
@@ -139,12 +156,23 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
   </div>
 </section>
 
-<!-- ===== 統計 (P3) ===== -->
+<!-- ===== 統計 ===== -->
 <section id="viewstat" class="hide">
-  <div class="wrap"><div class="card"><div class="empty">
-    <i class="ti ti-chart-bar" style="font-size:26px;color:var(--muted)"></i><br><br>
-    統計會在下一階段加上<br>頻率趨勢（日／週／月／年）、原因分佈、時段分佈、花費估算
-  </div></div></div>
+  <div class="wrap">
+    <div class="seg" id="statSeg">
+      <button data-g="day" class="active" onclick="loadStats('day')">日</button>
+      <button data-g="week" onclick="loadStats('week')">週</button>
+      <button data-g="month" onclick="loadStats('month')">月</button>
+      <button data-g="year" onclick="loadStats('year')">年</button>
+    </div>
+    <div class="card sum" id="statSum"></div>
+    <div class="sect-title">趨勢</div>
+    <div class="card" style="padding:12px 10px"><div style="height:220px"><canvas id="trendChart"></canvas></div></div>
+    <div class="sect-title">原因分佈</div>
+    <div class="card" id="reasonDist"></div>
+    <div class="sect-title">時段分佈</div>
+    <div class="card" id="hourDist"></div>
+  </div>
 </section>
 
 <!-- ===== 庫存 ===== -->
@@ -500,11 +528,62 @@ function finishPouchDo(pouchId){
     .withFailureHandler(err).finishPouch({pouchId:pouchId});
 }
 
+/* ---- 統計 ---- */
+var statGran='day', trendChart=null;
+function loadStats(g){
+  statGran=g;
+  document.querySelectorAll('#statSeg button').forEach(function(b){b.classList.toggle('active',b.dataset.g===g);});
+  google.script.run.withSuccessHandler(renderStats).withFailureHandler(err).getStats(g);
+}
+function renderStats(d){
+  $('statSum').innerHTML=
+    '<div><div class="k">這段期間</div><div class="v num">'+d.total+' 支</div></div>'+
+    '<div><div class="k">平均每天</div><div class="v num">'+d.perDay+' 支</div></div>';
+  drawTrend(d);
+  renderReasonDist(d.reasons);
+  renderHourDist(d.hourGroups);
+}
+function drawTrend(d){
+  if(typeof Chart==='undefined')return;
+  var ctx=$('trendChart').getContext('2d');
+  if(trendChart)trendChart.destroy();
+  var ds=[{type:'bar',label:'根數',data:d.counts,backgroundColor:'#9fd8cf',borderRadius:4,order:2,maxBarThickness:34}];
+  if(d.maWindow>1)ds.push({type:'line',label:d.maWindow+' 期均線',data:d.ma,borderColor:'#0f766e',backgroundColor:'#0f766e',borderWidth:2,pointRadius:0,tension:.35,spanGaps:true,order:1});
+  trendChart=new Chart(ctx,{data:{labels:d.labels,datasets:ds},options:{
+    responsive:true,maintainAspectRatio:false,animation:false,
+    plugins:{legend:{display:d.maWindow>1,labels:{boxWidth:12,font:{size:11},color:'#8a877f'}},tooltip:{}},
+    scales:{
+      x:{grid:{display:false},ticks:{font:{size:10},color:'#8a877f',maxRotation:0,autoSkip:true,maxTicksLimit:8}},
+      y:{beginAtZero:true,ticks:{precision:0,font:{size:10},color:'#8a877f'},grid:{color:'#eee'}}
+    }}});
+}
+function renderReasonDist(arr){
+  var el=$('reasonDist');
+  if(!arr||!arr.length){el.innerHTML='<div class="empty">這段期間沒有紀錄</div>';return;}
+  var max=arr[0].count||1, tot=arr.reduce(function(s,x){return s+x.count;},0);
+  el.innerHTML=arr.map(function(r){
+    var pct=Math.round(r.count/tot*100);
+    return '<div class="barrow"><div class="lab"><span>'+esc(r.name)+'</span><span class="num" style="color:var(--muted);font-weight:600">'+r.count+' 支 · '+pct+'%</span></div>'+
+      '<div class="track"><div class="fill" style="width:'+Math.round(r.count/max*100)+'%"></div></div></div>';
+  }).join('');
+}
+function renderHourDist(g){
+  var el=$('hourDist');
+  var tot=g.reduce(function(s,x){return s+x.v;},0);
+  if(!tot){el.innerHTML='<div class="empty">這段期間沒有紀錄</div>';return;}
+  var max=Math.max.apply(null,g.map(function(x){return x.v;}))||1;
+  el.innerHTML=g.map(function(x){
+    return '<div class="barrow"><div class="lab"><span>'+esc(x.k)+'</span><span class="num" style="color:var(--muted);font-weight:600">'+x.v+' 支</span></div>'+
+      '<div class="track"><div class="fill" style="width:'+Math.round(x.v/max*100)+'%"></div></div></div>';
+  }).join('');
+}
+
 /* ---- tabs / sheets ---- */
 function showTab(v){
   ['log','stat','inv','set'].forEach(function(k){$('view'+k).classList.toggle('hide',k!==v);});
   document.querySelectorAll('.tabbar button').forEach(function(b){b.classList.toggle('active',b.dataset.v===v);});
   $('saveBtn').parentElement.classList.toggle('hide',v!=='log');
+  if(v==='stat')loadStats(statGran);
 }
 function closeSheets(){document.querySelectorAll('.overlay').forEach(function(o){o.classList.remove('show');});}
 </script>
