@@ -58,6 +58,7 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
 .row .t2{font-size:12px;color:var(--muted);margin-top:1px}
 .row .rt{font-size:14px;color:var(--muted)}
 .row .x{border:0;background:transparent;color:var(--neg);font-size:20px;cursor:pointer;padding:4px 6px}
+.row .x:disabled{opacity:.25}
 .empty{padding:28px 16px;text-align:center;color:var(--muted);font-size:14px;line-height:1.6}
 .hide{display:none!important}
 
@@ -232,7 +233,6 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
     <div class="field"><label>名稱／口味</label><input id="pfName" placeholder="例：Terea 綠"></div>
     <div class="field" id="pfPerBoxRow"><label id="pfPerBoxLbl">每盒支數</label><input id="pfPerBox" class="num" type="number" inputmode="numeric" placeholder="20"></div>
     <div class="field"><label id="pfPriceLbl">售價／盒</label><input id="pfPrice" class="num" type="number" inputmode="numeric" placeholder="0"></div>
-    <div class="field"><label>設為常用（預選）</label><input id="pfDefault" type="checkbox" style="flex:0 0 auto;width:22px;height:22px"></div>
     <button class="sheet-btn primary" onclick="saveProd()">儲存</button>
     <button class="sheet-btn del hide" id="pfDelBtn" onclick="delProd()">刪除菸品</button>
     <button class="sheet-btn cancel" onclick="closeSheets()">取消</button>
@@ -300,7 +300,7 @@ google.script.run.withSuccessHandler(onBoot).withFailureHandler(err).getBootData
 
 function onBoot(d){
   S=d;
-  if(selP==null){var def=S.products.filter(function(p){return p.isDefault;})[0];selP=def?def.id:(S.products[0]?S.products[0].id:null);}
+  if(selP==null){selP=S.products[0]?S.products[0].id:null;}
   $('hdrDate').textContent=(new Date().getMonth()+1)+' / '+new Date().getDate();
   renderAll();
 }
@@ -424,12 +424,21 @@ function delEdit(){
 
 /* ---- settings: reasons ---- */
 function renderReasonMgr(){
-  var el=$('reasonMgr');
-  var rows=S.reasons.map(function(r){
+  var el=$('reasonMgr');var n=S.reasons.length;
+  var rows=S.reasons.map(function(r,i){
     return '<div class="row"><div class="mid tap" onclick="editReasonName(\''+esc(r.name)+'\')"><div class="t1">'+esc(r.name)+' <i class="ti ti-pencil" style="font-size:12px;color:var(--muted)"></i></div></div>'+
-      '<button class="x" onclick="rmReason(\''+esc(r.name)+'\')"><i class="ti ti-x"></i></button></div>';
-  }).join('');
+      '<button class="x" style="color:var(--muted)" '+(i===0?'disabled':'')+' onclick="moveReason('+i+',-1)"><i class="ti ti-chevron-up"></i></button>'+
+      '<button class="x" style="color:var(--muted)" '+(i===n-1?'disabled':'')+' onclick="moveReason('+i+',1)"><i class="ti ti-chevron-down"></i></button>'+
+      '<button class="x" onclick="rmReason(\''+esc(r.name)+'\')"><i class="ti ti-trash"></i></button></div>';
+  }).join('')||'<div class="empty">還沒有原因，從下面新增</div>';
   el.innerHTML=rows+'<div class="add-row"><input id="newReason" placeholder="新增原因" onkeydown="if(event.key===\'Enter\')addReasonMgr()"><button onclick="addReasonMgr()">加入</button></div>';
+}
+function moveReason(i,dir){
+  var j=i+dir;if(j<0||j>=S.reasons.length)return;
+  var a=S.reasons.slice(),t=a[i];a[i]=a[j];a[j]=t;S.reasons=a;
+  renderReasonMgr();renderReasonChips();
+  google.script.run.withSuccessHandler(function(rs){S.reasons=rs;renderReasonMgr();renderReasonChips();})
+    .withFailureHandler(err).reorderReasons(a.map(function(x){return x.name;}));
 }
 function editReasonName(old){
   var n=prompt('修改原因（會一併更新歷史紀錄）',old);
@@ -455,7 +464,7 @@ function renderProdMgr(){
   el.innerHTML=S.products.map(function(p){
     var sub=catTag(p.cat)+(p.perBox?' · '+p.perBox+' 支/盒':'')+(p.price?' · '+S.settings.cur+p.price:'');
     return '<div class="row tap" onclick="openProdSheet(\''+p.id+'\')">'+
-      '<div class="mid"><div class="t1">'+esc(p.name)+(p.isDefault?' <span class="tag" style="color:var(--accent)">常用</span>':'')+'</div><div class="t2">'+esc(sub)+'</div></div>'+
+      '<div class="mid"><div class="t1">'+esc(p.name)+'</div><div class="t2">'+esc(sub)+'</div></div>'+
       '<i class="ti ti-chevron-right" style="color:var(--muted)"></i></div>';
   }).join('');
 }
@@ -469,25 +478,19 @@ function openProdSheet(id){
   if(prodEditId){
     var p=null;for(var i=0;i<S.products.length;i++)if(S.products[i].id===prodEditId)p=S.products[i];
     $('prodSheetTitle').textContent='編輯菸品';
-    $('pfCat').value=p.cat;$('pfName').value=p.name;$('pfPerBox').value=p.perBox||'';$('pfPrice').value=p.price||'';$('pfDefault').checked=p.isDefault;
+    $('pfCat').value=p.cat;$('pfName').value=p.name;$('pfPerBox').value=p.perBox||'';$('pfPrice').value=p.price||'';
     $('pfDelBtn').classList.remove('hide');
   }else{
     $('prodSheetTitle').textContent='新增菸品';
-    $('pfCat').value='加熱菸';$('pfName').value='';$('pfPerBox').value='';$('pfPrice').value='';$('pfDefault').checked=false;
+    $('pfCat').value='加熱菸';$('pfName').value='';$('pfPerBox').value='';$('pfPrice').value='';
     $('pfDelBtn').classList.add('hide');
   }
   onCatChange();$('prodSheet').classList.add('show');
 }
 function saveProd(){
-  var payload={cat:$('pfCat').value,name:$('pfName').value,perBox:$('pfPerBox').value,price:$('pfPrice').value,isDefault:$('pfDefault').checked};
-  var run=google.script.run.withSuccessHandler(function(ps){S.products=ps;afterProdSave(payload.isDefault,payload.cat,payload.name);})
-    .withFailureHandler(err);
+  var payload={cat:$('pfCat').value,name:$('pfName').value,perBox:$('pfPerBox').value,price:$('pfPrice').value};
+  var run=google.script.run.withSuccessHandler(function(ps){S.products=ps;finishProd();}).withFailureHandler(err);
   if(prodEditId){payload.id=prodEditId;run.updateProduct(payload);}else{run.addProduct(payload);}
-}
-function afterProdSave(setDef,cat,name){
-  if(prodEditId&&setDef){
-    google.script.run.withSuccessHandler(function(ps){S.products=ps;finishProd();}).withFailureHandler(err).setDefaultProduct(prodEditId);
-  }else{finishProd();}
 }
 function finishProd(){closeSheets();if(selP==null&&S.products.length)selP=S.products[0].id;renderProdMgr();renderProdChips();renderPouchPick();renderInv();updateSaveBtn();toast('已儲存');}
 function delProd(){

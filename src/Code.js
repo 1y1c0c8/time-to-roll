@@ -87,9 +87,7 @@ function setup() {
   if (!sh(SHEET_REASONS)) {
     var r = book.insertSheet(SHEET_REASONS);
     r.getRange(1, 1, 1, REASON_HEADERS.length).setValues([REASON_HEADERS]);
-    var seed = [['壓力', 1, true], ['飯後', 2, true], ['無聊', 3, true], ['社交', 4, true], ['習慣', 5, true]];
-    r.getRange(2, 1, seed.length, 3).setValues(seed);
-    styleHeader(r, REASON_HEADERS.length);
+    styleHeader(r, REASON_HEADERS.length);   // 不預設任何原因，讓使用者自己新增
   }
 
   if (!sh(SHEET_PRODUCTS)) {
@@ -371,6 +369,19 @@ function renameReasonInHistory_(oldName, newName) {
       if (String(vals[i][0]) === oldName) { vals[i][0] = newName; changed = true; }
     if (changed) rng.setValues(vals);
   });
+}
+
+// 依前端傳來的名稱順序，重寫每列的「排序」欄
+function reorderReasons(names) {
+  var s = sh(SHEET_REASONS);
+  if (!s || s.getLastRow() < 2) return getReasons();
+  var last = s.getLastRow();
+  var col = s.getRange(2, RS_NAME, last - 1, 1).getValues();
+  for (var i = 0; i < col.length; i++) {
+    var idx = names.indexOf(String(col[i][0]).trim());
+    s.getRange(i + 2, RS_ORDER).setValue(idx < 0 ? 999 : idx);
+  }
+  return getReasons();
 }
 
 /* ------------------------------------------------------------------ 菸品 CRUD */
