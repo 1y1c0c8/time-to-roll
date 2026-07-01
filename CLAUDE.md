@@ -36,5 +36,5 @@
 - 私有 GAS web app 沒辦法設主畫面自訂圖示（沙盒 iframe），iOS 會用標題首字母字塊。
 
 ## 部署（clasp v3！）
-手機主畫面用 **`/exec`（版本化部署）**，不是 `/dev`。更新兩步：`clasp push` → **`clasp redeploy <部署ID>`**（v3 把舊的 `clasp deploy -i` 改名成 `redeploy`／`update-deployment`；`deploy`／`create-deployment` 會建**新**部署＋新網址，別用）。沿用同一個部署 ID → `/exec` 不變，iPhone 關掉重開即新版。部署 ID 用 `clasp list-deployments` 看非 `@HEAD` 那筆。懶人版：`./update.sh`。GitHub `git push` 只是備份，與 App 更新無關（目前無 remote）。
-本專案正式部署 ID：`AKfycbwYAfBwEjLlBgh4az8aLF7ldu6wUZ04vAUkioVO5ilrhUtUoxkwvG9cjvQfsHyuIWEG`。
+手機主畫面用 **`/exec`（版本化部署）**，不是 `/dev`。更新兩步：`clasp push` → **`clasp redeploy <部署ID>`**（v3 把舊的 `clasp deploy -i` 改名成 `redeploy`／`update-deployment`；`deploy`／`create-deployment` 會建**新**部署＋新網址，別用）。沿用同一個部署 ID → `/exec` 不變，iPhone 關掉重開即新版。部署 ID 用 `clasp list-deployments` 看非 `@HEAD` 那筆。懶人版：`./update.sh`（會自動抓非 @HEAD 的部署 ID）。GitHub `git push` 只是備份。
+正式部署 ID 用 `clasp list-deployments` 查（非 @HEAD 那筆）；不寫進 repo（跟 scriptId 一樣屬本機資訊）。
