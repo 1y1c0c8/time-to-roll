@@ -47,7 +47,7 @@ var POUCH_USING = '使用中', POUCH_DONE = '已用完';
 
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('Index')
-    .setTitle('Time to Roll')
+    .setTitle('🚬 Time to Roll')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover');
 }
 
