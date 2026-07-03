@@ -21,7 +21,7 @@
 ## 後端函式（Code.js）
 - `doGet()` / `setup()`（首次在編輯器跑一次）
 - `getBootData()` → {settings, reasons, products, records(當月), thisMonth}
-- 記錄：`addSmoke({productId,reason,pouchId?})`、`updateSmoke({id,month,reason?,productId?,pouchId?,timeMillis?})`、`deleteSmoke({id,month})`、`getMonthRecords(tab)`。捲菸必帶 pouchId；三者都連動庫存並回傳 `state_()`。
+- 記錄：`addSmoke({productId,reason,pouchId?})`（時間＝當下）、`updateSmoke({id,month,reason?,productId?,pouchId?,timeMillis?})`、`deleteSmoke({id,month})`、`getMonthRecords(tab)`。捲菸必帶 pouchId；三者都連動庫存並回傳 `state_()`。**時間只能在「編輯這根」改**（datetime-local；記錄頁不出現）；改時間若跨月，updateSmoke 會把整列搬到正確月分頁。
 - 原因：`addReason(name)`、`deleteReason(name)`（硬刪）、`renameReason(old,new)`（回溯歷史）、`reorderReasons(names)`
 - 菸品：`addProduct(p)`、`updateProduct(p)`、`deleteProduct(id)`（硬刪＋刪使用中菸草包）、`setDefaultProduct(id)`
 - 庫存（P2）：`buyStock({id,qty})`（加）、`setStock({id,value})`（設定絕對值：stick 支/捲菸 未開包數）、`openPouch({productId})`、`finishPouch({pouchId})`、`updatePouch({pouchId,rolled})`、`deletePouch({pouchId})`、`getPouches()`→{using,done}。連動 helper：`consumeInventory_/restoreInventory_/adjustProductLeft_/adjustPouchRolled_`。

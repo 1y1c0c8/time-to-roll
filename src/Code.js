@@ -274,7 +274,16 @@ function updateSmoke(payload) {
     loc.sheet.getRange(loc.row, R_POUCH).setValue(newPouch);
   }
 
-  if (payload.timeMillis) loc.sheet.getRange(loc.row, R_TIME).setValue(new Date(payload.timeMillis));
+  if (payload.timeMillis) {
+    var nd = new Date(payload.timeMillis);
+    loc.sheet.getRange(loc.row, R_TIME).setValue(nd);
+    var nm = monthTab(nd);
+    if (nm !== payload.month) {   // 時間改到別的月份 → 整列搬到正確的月分頁
+      var vals = loc.sheet.getRange(loc.row, 1, 1, RECORD_HEADERS.length).getValues()[0];
+      getOrCreateMonthSheet(nm).appendRow(vals);
+      loc.sheet.deleteRow(loc.row);
+    }
+  }
   return state_(payload.month);
 }
 
