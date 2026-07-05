@@ -154,6 +154,8 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
       </div>
       <div class="sect-title">原因</div>
       <div id="reasonChips" class="chips"></div>
+      <div class="sect-title">跟誰（可選）</div>
+      <div id="peopleChips" class="chips"></div>
     </div>
 
     <div class="sect-title">今天的紀錄</div>
@@ -196,6 +198,9 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
     <div class="sect-title">原因</div>
     <div id="reasonMgr" class="card"></div>
 
+    <div class="sect-title">人物</div>
+    <div id="peopleMgr" class="card"></div>
+
     <div class="sect-title" style="display:flex;justify-content:space-between;align-items:center">
       <span>菸品</span>
       <button class="mini" onclick="openProdSheet()"><i class="ti ti-plus"></i> 新增菸品</button>
@@ -222,6 +227,8 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
     </div>
     <div class="sect-title">原因</div>
     <div id="editReason" class="chips"></div>
+    <div class="sect-title">跟誰（可選）</div>
+    <div id="editPeople" class="chips"></div>
     <div class="field" style="margin-top:6px"><label>時間</label><input type="datetime-local" id="editTime"></div>
     <button class="sheet-btn primary" onclick="saveEdit()">更新</button>
     <button class="sheet-btn del" onclick="delEdit()">刪除這根</button>
@@ -288,8 +295,8 @@ function localDateStr(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(
 function ago(ms){var s=(Date.now()-ms)/1000;if(s<90)return '剛剛';var m=s/60;if(m<60)return Math.floor(m)+' 分鐘前';var h=m/60;if(h<24)return Math.floor(h)+' 小時前';return Math.floor(h/24)+' 天前';}
 function catTag(c){return c==='加熱菸'?'加熱':c==='盒菸'?'盒菸':c==='捲菸'?'捲菸':'';}
 
-var S={settings:{cur:'NT$'},reasons:[],products:[],pouches:{using:[],done:[]},records:[],thisMonth:''};
-var selP=null, selR=null, selPouch=null, editing=null, prodEditId=null;
+var S={settings:{cur:'NT$'},reasons:[],people:[],products:[],pouches:{using:[],done:[]},records:[],thisMonth:''};
+var selP=null, selR=null, selPouch=null, selPeople=[], editing=null, prodEditId=null;
 
 function show(id,on){$(id).classList.toggle('hide',!on);}
 function findP(id){for(var i=0;i<S.products.length;i++)if(S.products[i].id===id)return S.products[i];return null;}
@@ -315,7 +322,7 @@ function onBoot(d){
   renderAll();
 }
 
-function renderAll(){renderHero();renderProdChips();renderPouchPick();renderReasonChips();renderTodayList();renderInv();renderReasonMgr();renderProdMgr();updateSaveBtn();}
+function renderAll(){renderHero();renderProdChips();renderPouchPick();renderReasonChips();renderPeopleChips();renderTodayList();renderInv();renderReasonMgr();renderPeopleMgr();renderProdMgr();updateSaveBtn();}
 
 function todayRecords(){var t=localDateStr(new Date());return S.records.filter(function(r){return r.dateStr===t;});}
 
@@ -374,11 +381,26 @@ function quickAddReason(){
     .withFailureHandler(err).addReason(n);
 }
 
+function renderPeopleChips(){
+  var el=$('peopleChips');if(!el)return;
+  el.innerHTML=S.people.map(function(pp){
+    return '<button class="chip'+(selPeople.indexOf(pp.name)>=0?' on':'')+'" onclick="togglePerson(\''+esc(pp.name)+'\')">'+esc(pp.name)+'</button>';
+  }).join('')+'<button class="chip add" onclick="quickAddPerson()"><i class="ti ti-plus"></i> 新增</button>';
+}
+function togglePerson(n){var i=selPeople.indexOf(n);if(i>=0)selPeople.splice(i,1);else selPeople.push(n);renderPeopleChips();}
+function quickAddPerson(){
+  var n=prompt('新增人物');if(!n)return;
+  google.script.run.withSuccessHandler(function(ps){S.people=ps;if(selPeople.indexOf(n.trim())<0)selPeople.push(n.trim());renderPeopleChips();renderPeopleMgr();toast('已新增');})
+    .withFailureHandler(err).addPerson(n);
+}
+
 function renderTodayList(){
   var tr=todayRecords();var el=$('todayList');
   if(!tr.length){el.innerHTML='<div class="empty">今天還沒有紀錄</div>';return;}
   el.innerHTML=tr.map(function(r){
-    var sub=[r.productName,catTag(r.cat)].filter(Boolean).join(' · ');
+    var parts=[r.productName,catTag(r.cat)];
+    if(r.people&&r.people.length)parts.push('跟 '+r.people.join('、'));
+    var sub=parts.filter(Boolean).join(' · ');
     return '<div class="row tap" onclick="openEdit(\''+r.id+'\')">'+
       '<div class="mid"><div class="t1">'+esc(r.reason||'（無原因）')+'</div>'+(sub?'<div class="t2">'+esc(sub)+'</div>':'')+'</div>'+
       '<div class="rt num">'+r.timeStr+'</div></div>';
@@ -390,15 +412,15 @@ function doSmoke(){
   if(isRollSel()&&!selPouch){toast('先選或開一包菸草包');return;}
   if(!selR){toast('先選原因');return;}
   $('saveBtn').disabled=true;
-  google.script.run.withSuccessHandler(function(st){toast('已記一根 ✓');applyState(st);})
+  google.script.run.withSuccessHandler(function(st){toast('已記一根 ✓');selPeople=[];renderPeopleChips();applyState(st);})
     .withFailureHandler(function(e){$('saveBtn').disabled=false;err(e);})
-    .addSmoke({productId:selP,reason:selR,pouchId:isRollSel()?selPouch:''});
+    .addSmoke({productId:selP,reason:selR,pouchId:isRollSel()?selPouch:'',people:selPeople.slice()});
 }
 
 /* ---- edit a record ---- */
 function openEdit(id){
   var r=null;for(var i=0;i<S.records.length;i++)if(S.records[i].id===id){r=S.records[i];break;}
-  if(!r)return;editing={id:r.id,month:r.month,productId:r.productId,reason:r.reason,pouchId:r.pouchId||''};
+  if(!r)return;editing={id:r.id,month:r.month,productId:r.productId,reason:r.reason,pouchId:r.pouchId||'',people:(r.people||[]).slice()};
   editing._origTime=toLocalInput(r.time);$('editTime').value=editing._origTime;
   renderEditChips();$('editSheet').classList.add('show');
 }
@@ -420,7 +442,11 @@ function renderEditChips(){
   $('editReason').innerHTML=S.reasons.map(function(r){
     return '<button class="chip'+(r.name===editing.reason?' on':'')+'" onclick="editPickR(\''+esc(r.name)+'\')">'+esc(r.name)+'</button>';
   }).join('');
+  $('editPeople').innerHTML=S.people.map(function(pp){
+    return '<button class="chip'+(editing.people.indexOf(pp.name)>=0?' on':'')+'" onclick="editTogglePerson(\''+esc(pp.name)+'\')">'+esc(pp.name)+'</button>';
+  }).join('')||'<div class="empty" style="padding:6px 0;text-align:left">還沒有人物，去設定新增</div>';
 }
+function editTogglePerson(n){var i=editing.people.indexOf(n);if(i>=0)editing.people.splice(i,1);else editing.people.push(n);renderEditChips();}
 function editPickP(id){editing.productId=id;var p=findP(id);if(p&&p.cat==='捲菸'){var us=usingOf(id);editing.pouchId=us.length?us[0].id:(editing.pouchId||'');}else{editing.pouchId='';}renderEditChips();}
 function editPickPouch(id){editing.pouchId=id;renderEditChips();}
 function editPickR(n){editing.reason=n;renderEditChips();}
@@ -476,6 +502,48 @@ function rmReason(n){
   if(!confirm('刪除原因「'+n+'」？歷史紀錄會保留。'))return;
   google.script.run.withSuccessHandler(function(rs){S.reasons=rs;if(selR===n)selR=null;renderReasonMgr();renderReasonChips();updateSaveBtn();toast('已刪除');})
     .withFailureHandler(err).deleteReason(n);
+}
+
+/* ---- settings: people ---- */
+function renderPeopleMgr(){
+  var el=$('peopleMgr');if(!el)return;
+  var rows=S.people.map(function(pp){
+    return '<div class="row prow" data-name="'+esc(pp.name)+'">'+
+      '<span class="dragh"><i class="ti ti-menu-2"></i></span>'+
+      '<div class="mid tap" onclick="editPersonName(\''+esc(pp.name)+'\')"><div class="t1">'+esc(pp.name)+' <i class="ti ti-pencil" style="font-size:12px;color:var(--muted)"></i></div></div>'+
+      '<button class="x" onclick="rmPerson(\''+esc(pp.name)+'\')"><i class="ti ti-trash"></i></button></div>';
+  }).join('')||'<div class="empty">還沒有人物，從下面新增</div>';
+  el.innerHTML='<div id="peopleList">'+rows+'</div>'+
+    '<div class="add-row"><input id="newPerson" placeholder="新增人物" onkeydown="if(event.key===\'Enter\')addPersonMgr()"><button onclick="addPersonMgr()">加入</button></div>';
+  initPeopleSort();
+}
+function initPeopleSort(){
+  var list=$('peopleList');
+  if(!list||typeof Sortable==='undefined')return;
+  if(list._sortable)list._sortable.destroy();
+  list._sortable=Sortable.create(list,{handle:'.dragh',animation:150,onEnd:function(){
+    var names=[].slice.call(list.querySelectorAll('.prow')).map(function(n){return n.getAttribute('data-name');});
+    var map={};S.people.forEach(function(p){map[p.name]=p;});
+    S.people=names.map(function(n){return map[n];}).filter(Boolean);
+    renderPeopleChips();
+    google.script.run.withSuccessHandler(function(ps){S.people=ps;renderPeopleChips();}).withFailureHandler(err).reorderPeople(names);
+  }});
+}
+function editPersonName(old){
+  var n=prompt('修改人物（會一併更新歷史紀錄）',old);
+  if(n==null)return;n=n.trim();if(!n||n===old)return;
+  google.script.run.withSuccessHandler(function(ps){S.people=ps;var i=selPeople.indexOf(old);if(i>=0)selPeople[i]=n;renderPeopleMgr();renderPeopleChips();toast('已更新');})
+    .withFailureHandler(err).renamePerson(old,n);
+}
+function addPersonMgr(){
+  var v=$('newPerson').value;if(!v.trim())return;
+  google.script.run.withSuccessHandler(function(ps){S.people=ps;renderPeopleMgr();renderPeopleChips();toast('已新增');})
+    .withFailureHandler(err).addPerson(v);
+}
+function rmPerson(n){
+  if(!confirm('刪除人物「'+n+'」？歷史紀錄會保留。'))return;
+  google.script.run.withSuccessHandler(function(ps){S.people=ps;var i=selPeople.indexOf(n);if(i>=0)selPeople.splice(i,1);renderPeopleMgr();renderPeopleChips();toast('已刪除');})
+    .withFailureHandler(err).deletePerson(n);
 }
 
 /* ---- settings: products ---- */

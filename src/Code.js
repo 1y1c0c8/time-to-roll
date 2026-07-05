@@ -31,12 +31,18 @@ var STICK_CATS = ['加熱菸', '盒菸'];   // 支為單位、可自動連動扣
 function isStick(cat) { return STICK_CATS.indexOf(cat) >= 0; }
 
 // 紀錄 columns (1-based, fixed) — one sheet per month, named yyyy-MM
-var R_ID = 1, R_TIME = 2, R_REASON = 3, R_PID = 4, R_PNAME = 5, R_CAT = 6, R_POUCH = 7, R_COST = 8, R_NOTE = 9;
-var RECORD_HEADERS = ['id', '時間', '原因', '菸品id', '菸品名稱', '類別', '菸草包id', '成本', '備註'];
+var R_ID = 1, R_TIME = 2, R_REASON = 3, R_PID = 4, R_PNAME = 5, R_CAT = 6, R_POUCH = 7, R_COST = 8, R_NOTE = 9, R_PEOPLE = 10;
+var RECORD_HEADERS = ['id', '時間', '原因', '菸品id', '菸品名稱', '類別', '菸草包id', '成本', '備註', '人物'];
+var PEOPLE_SEP = '、';   // 多個人名以此連接存一格
 
 // 原因 columns (1-based, fixed)
 var RS_NAME = 1, RS_ORDER = 2, RS_ACTIVE = 3;
 var REASON_HEADERS = ['名稱', '排序', '啟用'];
+
+// 人物 columns（結構同原因）
+var SHEET_PEOPLE = '人物';
+var PE_NAME = 1, PE_ORDER = 2, PE_ACTIVE = 3;
+var PEOPLE_HEADERS = ['名稱', '排序', '啟用'];
 
 // 菸草包 columns (P2, 1-based, fixed)
 var G_ID = 1, G_PID = 2, G_NAME = 3, G_OPEN = 4, G_DONE = 5, G_ROLLED = 6, G_PRICE = 7, G_STATUS = 8;
@@ -90,6 +96,12 @@ function setup() {
     styleHeader(r, REASON_HEADERS.length);   // 不預設任何原因，讓使用者自己新增
   }
 
+  if (!sh(SHEET_PEOPLE)) {
+    var pe = book.insertSheet(SHEET_PEOPLE);
+    pe.getRange(1, 1, 1, PEOPLE_HEADERS.length).setValues([PEOPLE_HEADERS]);
+    styleHeader(pe, PEOPLE_HEADERS.length);
+  }
+
   if (!sh(SHEET_PRODUCTS)) {
     var p = book.insertSheet(SHEET_PRODUCTS);
     p.getRange(1, 1, 1, PRODUCT_HEADERS.length).setValues([PRODUCT_HEADERS]);
@@ -115,6 +127,7 @@ function getBootData() {
   return {
     settings: readSettings(),
     reasons: getReasons(),
+    people: getPeople(),
     products: getProducts(),
     pouches: getPouches(),
     records: getMonthRecords(tab),
@@ -123,16 +136,22 @@ function getBootData() {
 }
 
 function ensureReady_() {
-  if (!sh(SHEET_SETTINGS) || !sh(SHEET_REASONS) || !sh(SHEET_PRODUCTS) || !sh(SHEET_POUCHES)) setup();
+  if (!sh(SHEET_SETTINGS) || !sh(SHEET_REASONS) || !sh(SHEET_PRODUCTS) || !sh(SHEET_POUCHES) || !sh(SHEET_PEOPLE)) setup();
   migrate_();
 }
 
-// 幫既有分頁補上後來新增的欄位表頭（P1 → P2）
+// 幫既有分頁補上後來新增的欄位表頭
 function migrate_() {
   var p = sh(SHEET_PRODUCTS);
   if (p && String(p.getRange(1, P_POUCHES).getValue()).trim() !== '未開包數') {
     p.getRange(1, P_POUCHES).setValue('未開包數').setFontWeight('bold').setBackground('#e3efed');
   }
+  // 月分頁補上「人物」表頭（R_PEOPLE 欄）
+  ss().getSheets().forEach(function (s) {
+    if (/^\d{4}-\d{2}$/.test(s.getName()) && String(s.getRange(1, R_PEOPLE).getValue()).trim() !== '人物') {
+      s.getRange(1, R_PEOPLE).setValue('人物').setFontWeight('bold').setBackground('#e3efed');
+    }
+  });
 }
 
 function readSettings() {
@@ -208,6 +227,7 @@ function getMonthRecords(tab) {
       productName: String(row[R_PNAME - 1] || ''),
       cat: String(row[R_CAT - 1] || ''),
       pouchId: String(row[R_POUCH - 1] || ''),
+      people: String(row[R_PEOPLE - 1] || '').split(PEOPLE_SEP).filter(Boolean),
       month: tab
     });
   });
@@ -243,6 +263,7 @@ function addSmoke(payload) {
   row[R_PNAME - 1] = prod ? prod.name : '';
   row[R_CAT - 1] = cat;
   row[R_POUCH - 1] = pouchId;
+  row[R_PEOPLE - 1] = joinPeople_(payload.people);
   s.appendRow(row);
   consumeInventory_(cat, row[R_PID - 1], pouchId);
   return state_(tab);
@@ -273,6 +294,8 @@ function updateSmoke(payload) {
     loc.sheet.getRange(loc.row, R_CAT).setValue(newCat);
     loc.sheet.getRange(loc.row, R_POUCH).setValue(newPouch);
   }
+
+  if (payload.people != null) loc.sheet.getRange(loc.row, R_PEOPLE).setValue(joinPeople_(payload.people));
 
   if (payload.timeMillis) {
     var nd = new Date(payload.timeMillis);
@@ -391,6 +414,83 @@ function reorderReasons(names) {
     s.getRange(i + 2, RS_ORDER).setValue(idx < 0 ? 999 : idx);
   }
   return getReasons();
+}
+
+/* ------------------------------------------------------------------ 人物 CRUD（結構同原因） */
+
+function joinPeople_(arr) { return (arr || []).filter(Boolean).join(PEOPLE_SEP); }
+
+function getPeople() {
+  var s = sh(SHEET_PEOPLE);
+  if (!s || s.getLastRow() < 2) return [];
+  var v = s.getRange(2, 1, s.getLastRow() - 1, 3).getValues();
+  var out = [];
+  v.forEach(function (row, i) {
+    if (String(row[PE_NAME - 1]).trim() === '') return;
+    var active = row[PE_ACTIVE - 1] !== false && String(row[PE_ACTIVE - 1]).toUpperCase() !== 'FALSE';
+    if (!active) return;
+    out.push({ name: String(row[PE_NAME - 1]).trim(), order: Number(row[PE_ORDER - 1]) || i, row: i + 2 });
+  });
+  out.sort(function (a, b) { return a.order - b.order; });
+  return out;
+}
+
+function addPerson(name) {
+  ensureReady_();
+  name = String(name || '').trim();
+  if (!name) throw new Error('名字不能空白');
+  if (getPeople().some(function (p) { return p.name === name; })) throw new Error('這個人已經有了');
+  var s = sh(SHEET_PEOPLE);
+  s.appendRow([name, s.getLastRow(), true]);
+  return getPeople();
+}
+
+function deletePerson(name) {
+  var s = sh(SHEET_PEOPLE);
+  if (!s || s.getLastRow() < 2) return getPeople();
+  var v = s.getRange(2, 1, s.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < v.length; i++)
+    if (String(v[i][0]).trim() === String(name).trim()) { s.deleteRow(i + 2); break; }
+  return getPeople();
+}
+
+function renamePerson(oldName, newName) {
+  newName = String(newName || '').trim();
+  oldName = String(oldName || '').trim();
+  if (!newName) throw new Error('名字不能空白');
+  if (newName === oldName) return getPeople();
+  var s = sh(SHEET_PEOPLE);
+  var v = s.getRange(2, 1, s.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < v.length; i++)
+    if (String(v[i][0]).trim() === oldName) s.getRange(i + 2, PE_NAME).setValue(newName);
+  renamePersonInHistory_(oldName, newName);
+  return getPeople();
+}
+function renamePersonInHistory_(oldName, newName) {
+  ss().getSheets().forEach(function (sheet) {
+    if (!/^\d{4}-\d{2}$/.test(sheet.getName())) return;
+    var last = sheet.getLastRow();
+    if (last < 2) return;
+    var rng = sheet.getRange(2, R_PEOPLE, last - 1, 1), vals = rng.getValues(), changed = false;
+    for (var i = 0; i < vals.length; i++) {
+      var arr = String(vals[i][0] || '').split(PEOPLE_SEP).filter(Boolean);
+      var hit = false;
+      for (var j = 0; j < arr.length; j++) if (arr[j] === oldName) { arr[j] = newName; hit = true; }
+      if (hit) { vals[i][0] = arr.join(PEOPLE_SEP); changed = true; }
+    }
+    if (changed) rng.setValues(vals);
+  });
+}
+
+function reorderPeople(names) {
+  var s = sh(SHEET_PEOPLE);
+  if (!s || s.getLastRow() < 2) return getPeople();
+  var col = s.getRange(2, PE_NAME, s.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < col.length; i++) {
+    var idx = names.indexOf(String(col[i][0]).trim());
+    s.getRange(i + 2, PE_ORDER).setValue(idx < 0 ? 999 : idx);
+  }
+  return getPeople();
 }
 
 /* ------------------------------------------------------------------ 菸品 CRUD */

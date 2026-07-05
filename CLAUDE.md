@@ -12,8 +12,9 @@
 - `設定`：key-value（時區、幣別、預設每盒支數）。讀 A:B。
 - `原因`：名稱 | 排序 | 啟用。**setup() 不預設任何原因**（使用者自建）。**刪除＝硬刪整列**（下面上移）；改名（`renameReason`）會**回溯更新所有月分頁的原因文字**，統計才不會分裂；排序由 `reorderReasons(names)` 依前端傳入順序重寫「排序」欄，設定頁用上下箭頭調。歷史紀錄存原因文字快照，硬刪不影響歷史。「常用預設」功能已移除（P_DEFAULT 欄保留但不再使用）。
 - `菸品`：id | 類別 | 名稱 | 每盒支數 | 售價 | 售價單位 | 剩餘支數 | 常用預設 | 狀態 | 建立時間 | 未開包數。捲菸的每盒支數留空；剩餘支數給加熱菸/盒菸、未開包數給捲菸。**刪除＝硬刪整列**（並順手刪掉該菸品「使用中」的菸草包，保留已用完歷史）。剩餘支數／未開包數可用 `setStock` 直接設定（處理半盒／修正）。（未開包數為 P2 新增第 11 欄，`ensureReady_→migrate_()` 會幫既有分頁補表頭。）
+- `人物`：名稱 | 排序 | 啟用（結構同原因，硬刪、可拖曳排序、改名回溯歷史）。記錄「跟誰抽」用，可多選。
 - `菸草包`（P2）：id | 菸品id | 口味 | 開封日 | 用完日 | 已捲支數 | 售價 | 狀態。
-- `紀錄`：**一個月一分頁**，分頁名 `yyyy-MM`。欄位 id | 時間 | 原因 | 菸品id | 菸品名稱 | 類別 | 菸草包id | 成本 | 備註。原因與菸品名稱都存**快照**，之後改名／刪除不影響歷史。
+- `紀錄`：**一個月一分頁**，分頁名 `yyyy-MM`。欄位 id | 時間 | 原因 | 菸品id | 菸品名稱 | 類別 | 菸草包id | 成本 | 備註 | 人物。原因／菸品名稱／人物都存**快照**，之後改名（原因/人物會回溯）／刪除不影響歷史。人物多選以「、」連接存一格（R_PEOPLE=10，migrate_ 補月分頁表頭）。
 
 ## 固定欄位索引
 `Code.js` 用 `P_*` / `R_*` / `RS_*` 常數定位欄，**絕不用 `HEADERS.length`**。加欄時排在尾端、更新常數即可。菸品／菸草包／紀錄的分頁一開始就建好 P2/P3 全部欄位，P1 只是留白。
@@ -23,6 +24,7 @@
 - `getBootData()` → {settings, reasons, products, records(當月), thisMonth}
 - 記錄：`addSmoke({productId,reason,pouchId?})`（時間＝當下）、`updateSmoke({id,month,reason?,productId?,pouchId?,timeMillis?})`、`deleteSmoke({id,month})`、`getMonthRecords(tab)`。捲菸必帶 pouchId；三者都連動庫存並回傳 `state_()`。**時間只能在「編輯這根」改**（datetime-local；記錄頁不出現）；改時間若跨月，updateSmoke 會把整列搬到正確月分頁。
 - 原因：`addReason(name)`、`deleteReason(name)`（硬刪）、`renameReason(old,new)`（回溯歷史）、`reorderReasons(names)`
+- 人物：`getPeople()`、`addPerson(name)`、`deletePerson(name)`（硬刪）、`renamePerson(old,new)`（回溯歷史，含拆/併「、」）、`reorderPeople(names)`。addSmoke/updateSmoke 收 `people`（陣列）。記錄頁與編輯視窗都有「跟誰（可選）」多選 chips。
 - 菸品：`addProduct(p)`、`updateProduct(p)`、`deleteProduct(id)`（硬刪＋刪使用中菸草包）、`setDefaultProduct(id)`
 - 庫存（P2）：`buyStock({id,qty})`（加）、`setStock({id,value})`（設定絕對值：stick 支/捲菸 未開包數）、`openPouch({productId})`、`finishPouch({pouchId})`、`updatePouch({pouchId,rolled})`、`deletePouch({pouchId})`、`getPouches()`→{using,done}。連動 helper：`consumeInventory_/restoreInventory_/adjustProductLeft_/adjustPouchRolled_`。
 - 統計（P3）：`getStats(gran)`→{labels,counts,ma,maWindow,reasons[],hourGroups[],total,perDay}。讀跨月分頁用 `readRecordsSince_/monthKeysBetween_`；桶/日期 helper：`bucketKey_/hourGroup_/movingAvg_/addDays_/addMonths_/mondayOf_/firstOfMonth_/fmt_`。前端用 Chart.js（head CDN 載入）。
