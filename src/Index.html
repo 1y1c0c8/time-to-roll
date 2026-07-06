@@ -48,6 +48,10 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
 .hero .last{font-size:12px;color:var(--muted);margin-top:6px}
 
 .sect-title{font-size:12px;color:var(--muted);font-weight:700;margin:16px 4px 8px}
+.sec-h{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--muted);font-weight:700;margin:16px 4px 8px;cursor:pointer}
+.sec-h i{transition:transform .2s}
+.sec-h.collapsed i{transform:rotate(-90deg)}
+.sec-body.collapsed{display:none}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{background:var(--card);border:1px solid var(--line);color:var(--ink);border-radius:999px;
   padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s}
@@ -185,12 +189,20 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
     </div>
     <div id="statRange" style="text-align:center;font-size:12px;color:var(--muted);margin:0 4px 12px"></div>
     <div class="card sum" id="statSum"></div>
-    <div class="sect-title">趨勢</div>
-    <div class="card" style="padding:12px 10px"><div style="height:220px"><canvas id="trendChart"></canvas></div></div>
-    <div class="sect-title">原因分佈</div>
-    <div class="card" id="reasonDist"></div>
-    <div class="sect-title">時段分佈</div>
-    <div class="card" id="hourDist"></div>
+    <div class="sec-h" id="secH-trend" onclick="toggleSec('trend')">趨勢 <i class="ti ti-chevron-down"></i></div>
+    <div class="sec-body" id="sec-trend"><div class="card" style="padding:12px 10px"><div style="height:220px"><canvas id="trendChart"></canvas></div></div></div>
+
+    <div class="sec-h" id="secH-reason" onclick="toggleSec('reason')">原因分佈 <i class="ti ti-chevron-down"></i></div>
+    <div class="sec-body" id="sec-reason"><div class="card" id="reasonDist"></div></div>
+
+    <div class="sec-h" id="secH-hour" onclick="toggleSec('hour')">時段分佈 <i class="ti ti-chevron-down"></i></div>
+    <div class="sec-body" id="sec-hour"><div class="card" id="hourDist"></div></div>
+
+    <div class="sec-h" id="secH-place" onclick="toggleSec('place')">地點 <i class="ti ti-chevron-down"></i></div>
+    <div class="sec-body" id="sec-place">
+      <div class="card" id="placeDist" style="margin-bottom:10px"></div>
+      <div class="card" style="padding:8px"><div id="statMap"></div></div>
+    </div>
   </div>
 </section>
 
@@ -748,7 +760,7 @@ function renderPrefs(){
   $('setMapStyle').value=S.settings.mapStyle||'voyager';
 }
 function savePref(key,val){
-  google.script.run.withSuccessHandler(function(s){S.settings=s;renderPrefs();renderProdMgr();renderInv();toast('已更新');}).withFailureHandler(err).setSetting(key,val);
+  google.script.run.withSuccessHandler(function(s){S.settings=s;renderPrefs();renderProdMgr();renderInv();if(statMap&&secState.place)renderStatMap();toast('已更新');}).withFailureHandler(err).setSetting(key,val);
 }
 
 /* ---- settings: products ---- */
@@ -893,7 +905,53 @@ function pouchDelete(){
 }
 
 /* ---- 統計 ---- */
-var statGran='month', statKey='', trendChart=null;
+var statGran='month', statKey='', trendChart=null, STAT=null, statMap=null, heatLayer=null;
+var secState={trend:true,reason:true,hour:false,place:false};
+function applySecState(){
+  ['trend','reason','hour','place'].forEach(function(k){
+    var h=$('secH-'+k),b=$('sec-'+k);if(!h||!b)return;
+    h.classList.toggle('collapsed',!secState[k]);
+    b.classList.toggle('collapsed',!secState[k]);
+  });
+}
+function toggleSec(k){
+  secState[k]=!secState[k];applySecState();
+  if(secState[k]&&STAT){
+    if(k==='trend')drawTrend(STAT);
+    if(k==='place')setTimeout(renderStatMap,80);
+  }
+}
+function renderPlaceStats(d){
+  var el=$('placeDist');if(!el)return;
+  var arr=(d.places||[]);
+  if(!arr.length&&!d.noPlace){el.innerHTML='<div class="empty">這段期間沒有地點紀錄</div>';return;}
+  var max=(arr[0]&&arr[0].count)||1;
+  var tot=arr.reduce(function(s,x){return s+x.count;},0)+(d.noPlace||0);
+  var html=arr.map(function(p){
+    var pct=Math.round(p.count/tot*100);
+    return '<div class="barrow"><div class="lab"><span>'+(p.lat!=null?'<i class="ti ti-map-pin" style="font-size:11px"></i> ':'')+esc(p.name)+'</span><span class="num" style="color:var(--muted);font-weight:600">'+p.count+' 支 · '+pct+'%</span></div><div class="track"><div class="fill" style="width:'+Math.round(p.count/max*100)+'%"></div></div></div>';
+  }).join('');
+  if(d.noPlace)html+='<div class="barrow"><div class="lab"><span style="color:var(--muted)">（沒記地點）</span><span class="num" style="color:var(--muted);font-weight:600">'+d.noPlace+' 支</span></div></div>';
+  el.innerHTML=html;
+}
+function renderStatMap(){
+  if(typeof L==='undefined'||!$('statMap'))return;
+  var pts=((STAT&&STAT.places)||[]).filter(function(p){return p.lat!=null;});
+  if(!statMap){
+    statMap=L.map('statMap').setView([22.9997,120.2270],13);
+    statMap._tile=tileLayerFor(S.settings.mapStyle);statMap._tile.addTo(statMap);
+  }else{
+    if(statMap._tile)statMap.removeLayer(statMap._tile);
+    statMap._tile=tileLayerFor(S.settings.mapStyle);statMap._tile.addTo(statMap);
+  }
+  if(heatLayer){statMap.removeLayer(heatLayer);heatLayer=null;}
+  if(pts.length){
+    var max=Math.max.apply(null,pts.map(function(p){return p.count;}))||1;
+    heatLayer=L.heatLayer(pts.map(function(p){return [p.lat,p.lng,p.count];}),{radius:35,blur:22,maxZoom:17,max:max}).addTo(statMap);
+    try{statMap.fitBounds(L.latLngBounds(pts.map(function(p){return [p.lat,p.lng];})),{padding:[40,40],maxZoom:16});}catch(e){}
+  }
+  statMap.invalidateSize();
+}
 function setGran(g){
   statGran=g;
   document.querySelectorAll('#statSeg button').forEach(function(b){b.classList.toggle('active',b.dataset.g===g);});
@@ -911,14 +969,17 @@ function doLoadStats(){
   google.script.run.withSuccessHandler(renderStats).withFailureHandler(err).getStats(statGran,statKey);
 }
 function renderStats(d){
-  statKey=d.key;
+  STAT=d;statKey=d.key;
   $('statRange').textContent=d.rangeLabel||'';
   $('statSum').innerHTML=
     '<div><div class="k">這段期間</div><div class="v num">'+d.total+' 支</div></div>'+
     '<div><div class="k">平均每天</div><div class="v num">'+d.perDay+' 支</div></div>';
-  drawTrend(d);
+  applySecState();
+  if(secState.trend)drawTrend(d);
   renderReasonDist(d.reasons);
   renderHourDist(d.hourGroups);
+  renderPlaceStats(d);
+  if(secState.place)renderStatMap();
 }
 function drawTrend(d){
   if(typeof Chart==='undefined')return;

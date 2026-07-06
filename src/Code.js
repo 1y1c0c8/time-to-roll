@@ -854,7 +854,7 @@ function getStats(gran, key) {
   getReasons().forEach(function (r) { if (!r.stats) excluded[r.name] = 1; });
 
   var recs = readRecordsBetween_(start, end);
-  var reason = {}, hours = [0, 0, 0, 0], total = 0;
+  var reason = {}, hours = [0, 0, 0, 0], places = {}, noPlace = 0, total = 0;
   recs.forEach(function (r) {
     if (excluded[r.reason]) return;   // 這類紀錄完全不進統計
     var d = new Date(r.time);
@@ -864,7 +864,15 @@ function getStats(gran, key) {
     var rn = r.reason || '（無原因）';
     reason[rn] = (reason[rn] || 0) + 1;
     hours[hourGroup_(d)]++;
+    if (r.place) places[r.place] = (places[r.place] || 0) + 1; else noPlace++;
   });
+
+  var coordMap = {};
+  getPlaces().forEach(function (pl) { coordMap[pl.name] = { lat: pl.lat, lng: pl.lng }; });
+  var placeArr = Object.keys(places).map(function (k) {
+    var c = coordMap[k] || {};
+    return { name: k, count: places[k], lat: (c.lat == null ? null : c.lat), lng: (c.lng == null ? null : c.lng) };
+  }).sort(function (a, b) { return b.count - a.count; });
 
   var days = Math.max(1, Math.round((dateOnly_(end) - dateOnly_(start)) / 86400000) + 1);
   var reasons = Object.keys(reason).map(function (k) { return { name: k, count: reason[k] }; })
@@ -881,6 +889,8 @@ function getStats(gran, key) {
       { k: '早上 5–11', v: hours[0] }, { k: '下午 11–17', v: hours[1] },
       { k: '晚上 17–23', v: hours[2] }, { k: '深夜 23–5', v: hours[3] }
     ],
+    places: placeArr,
+    noPlace: noPlace,
     total: total,
     perDay: Math.round(total / days * 10) / 10
   };

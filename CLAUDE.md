@@ -7,7 +7,7 @@
 - **P2（已完成，可用）**：庫存。加熱菸/盒菸有「剩餘支數」，買入輸入盒數 → +（盒×每盒支數），記一根自動 −1，顯示「X 盒 Y 支」，某口味整體剩 1 支時卡片跳彩蛋「盒仔內賰尾枝」（襯線斜體 --warm）。捲菸有「未開包數」，買入 +包數；「開新包」建立使用中的菸草包（未開 −1），記一根（捲菸）要選一包 → 該包已捲 +1，「這包用完」歸檔記用完日；歷史顯示「共捲 N 支、每支成本 = 售價/N」。可同時多包使用中。開新包按鈕文案「Time to Roll」。刪除/編輯紀錄會**回沖庫存**（restore/consume）。addSmoke/updateSmoke/deleteSmoke/buyStock/openPouch/finishPouch 都回傳整包狀態 {records?,products,pouches}，前端 applyState() 一次刷新。
 - **P3（已完成，可用）**：統計。segmented 日／週／月／年 + **LEDGER 式期間選擇器**（日/週用 `<input type=date>`、月用 `<input type=month>`、年用下拉；週選週內任一天，後端以週一換算整週）。選定期間後，趨勢圖顯示**該期間內的細分長條**：日→24 小時、週→7 天、月→當月每天、年→12 個月；疊移動平均折線（月 MA7、年 MA3；日/週不畫）。原因分佈＝水平排行長條（含 %）、時段分佈＝早午晚深夜 4 組，都只算該期間。metric：期間總支數、平均每天；期間起訖顯示在選擇器下方（`statRange`）。`getStats(gran,key)`，前端 `setGran()`/`doLoadStats()`，切到統計分頁預設 `month`＝本月。**花費估算延後到下一版（P4）**。
 - **位置 Step 1（已完成）**：地點資料庫（`地點` 分頁，同人物 + 座標）。記錄頁/編輯視窗有「在哪（可選）」單選 chips；「＋新增地點」會自動抓一次 GPS 存進該地點。設定頁「地點」管理（拖曳/改名回溯/刪除，點進去可用「抓目前位置」或「在地圖上點選」設座標，Leaflet 圖釘可拖）。設定頁「偏好」卡：幣別、預設每盒支數、**地圖樣式**（voyager/positron/osm/satellite，存 `設定` 的「地圖樣式」）。head 載入 Leaflet + leaflet.heat；前端 `BASEMAPS`/`tileLayerFor(style)`；GPS 用 `navigator.geolocation`（可行性已驗證，Safari OK）。
-- **位置 Step 2（未做）**：統計頁「地點」區塊——地圖疊熱力圖（各地點座標以次數加權）＋地點排行。
+- **位置 Step 2（已完成）**：統計頁「地點」區塊——地點排行（水平長條，沒座標/沒記也列）＋ Leaflet 地圖疊熱力圖（各地點座標以該期間次數加權、fitBounds）。統計頁四個區段（趨勢/原因/時段/地點）改**可折疊**（`sec-h`/`sec-body`，`toggleSec`/`applySecState`，`secState` 記狀態；預設趨勢+原因開、時段+地點收）；地點地圖**點開才 render**（避免隱藏容器抓不到尺寸），展開/切期間/改地圖樣式時 `renderStatMap()`。`getStats` 回傳 `places[]`(name,count,lat,lng) + `noPlace`。
 - **P4（未做）**：花費估算。
 
 ## 資料模型（試算表分頁）
