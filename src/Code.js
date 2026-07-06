@@ -31,8 +31,8 @@ var STICK_CATS = ['加熱菸', '盒菸'];   // 支為單位、可自動連動扣
 function isStick(cat) { return STICK_CATS.indexOf(cat) >= 0; }
 
 // 紀錄 columns (1-based, fixed) — one sheet per month, named yyyy-MM
-var R_ID = 1, R_TIME = 2, R_REASON = 3, R_PID = 4, R_PNAME = 5, R_CAT = 6, R_POUCH = 7, R_COST = 8, R_NOTE = 9, R_PEOPLE = 10;
-var RECORD_HEADERS = ['id', '時間', '原因', '菸品id', '菸品名稱', '類別', '菸草包id', '成本', '備註', '人物'];
+var R_ID = 1, R_TIME = 2, R_REASON = 3, R_PID = 4, R_PNAME = 5, R_CAT = 6, R_POUCH = 7, R_COST = 8, R_NOTE = 9, R_PEOPLE = 10, R_PLACE = 11;
+var RECORD_HEADERS = ['id', '時間', '原因', '菸品id', '菸品名稱', '類別', '菸草包id', '成本', '備註', '人物', '地點'];
 var PEOPLE_SEP = '、';   // 多個人名以此連接存一格
 
 // 原因 columns (1-based, fixed)
@@ -44,6 +44,11 @@ var SHEET_PEOPLE = '人物';
 var PE_NAME = 1, PE_ORDER = 2, PE_ACTIVE = 3;
 var PEOPLE_HEADERS = ['名稱', '排序', '啟用'];
 
+// 地點 columns（結構同原因，多兩欄座標）
+var SHEET_PLACES = '地點';
+var LO_NAME = 1, LO_ORDER = 2, LO_ACTIVE = 3, LO_LAT = 4, LO_LNG = 5;
+var PLACES_HEADERS = ['名稱', '排序', '啟用', '緯度', '經度'];
+
 // 菸草包 columns (P2, 1-based, fixed)
 var G_ID = 1, G_PID = 2, G_NAME = 3, G_OPEN = 4, G_DONE = 5, G_ROLLED = 6, G_PRICE = 7, G_STATUS = 8;
 var POUCH_HEADERS = ['id', '菸品id', '口味', '開封日', '用完日', '已捲支數', '售價', '狀態'];
@@ -51,9 +56,8 @@ var POUCH_USING = '使用中', POUCH_DONE = '已用完';
 
 /* ------------------------------------------------------------------ web entry */
 
-function doGet(e) {
-  var file = (e && e.parameter && e.parameter.probe) ? 'Probe' : 'Index';   // ?probe=1 → 定位/地圖可行性測試（暫時）
-  return HtmlService.createHtmlOutputFromFile(file)
+function doGet() {
+  return HtmlService.createHtmlOutputFromFile('Index')
     .setTitle('🚬 Time to Roll')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover');
 }
@@ -103,6 +107,12 @@ function setup() {
     styleHeader(pe, PEOPLE_HEADERS.length);
   }
 
+  if (!sh(SHEET_PLACES)) {
+    var lo = book.insertSheet(SHEET_PLACES);
+    lo.getRange(1, 1, 1, PLACES_HEADERS.length).setValues([PLACES_HEADERS]);
+    styleHeader(lo, PLACES_HEADERS.length);
+  }
+
   if (!sh(SHEET_PRODUCTS)) {
     var p = book.insertSheet(SHEET_PRODUCTS);
     p.getRange(1, 1, 1, PRODUCT_HEADERS.length).setValues([PRODUCT_HEADERS]);
@@ -129,6 +139,7 @@ function getBootData() {
     settings: readSettings(),
     reasons: getReasons(),
     people: getPeople(),
+    places: getPlaces(),
     products: getProducts(),
     pouches: getPouches(),
     records: getMonthRecords(tab),
@@ -137,7 +148,7 @@ function getBootData() {
 }
 
 function ensureReady_() {
-  if (!sh(SHEET_SETTINGS) || !sh(SHEET_REASONS) || !sh(SHEET_PRODUCTS) || !sh(SHEET_POUCHES) || !sh(SHEET_PEOPLE)) setup();
+  if (!sh(SHEET_SETTINGS) || !sh(SHEET_REASONS) || !sh(SHEET_PRODUCTS) || !sh(SHEET_POUCHES) || !sh(SHEET_PEOPLE) || !sh(SHEET_PLACES)) setup();
   migrate_();
 }
 
@@ -153,14 +164,16 @@ function migrate_() {
   }
   // 月分頁補上「人物」表頭（R_PEOPLE 欄）
   ss().getSheets().forEach(function (s) {
-    if (/^\d{4}-\d{2}$/.test(s.getName()) && String(s.getRange(1, R_PEOPLE).getValue()).trim() !== '人物') {
+    if (!/^\d{4}-\d{2}$/.test(s.getName())) return;
+    if (String(s.getRange(1, R_PEOPLE).getValue()).trim() !== '人物')
       s.getRange(1, R_PEOPLE).setValue('人物').setFontWeight('bold').setBackground('#e3efed');
-    }
+    if (String(s.getRange(1, R_PLACE).getValue()).trim() !== '地點')
+      s.getRange(1, R_PLACE).setValue('地點').setFontWeight('bold').setBackground('#e3efed');
   });
 }
 
 function readSettings() {
-  var o = { tz: TZ, cur: CUR, perBox: 20 };
+  var o = { tz: TZ, cur: CUR, perBox: 20, mapStyle: 'voyager' };
   var s = sh(SHEET_SETTINGS);
   if (!s || s.getLastRow() < 2) return o;
   var v = s.getRange(2, 1, s.getLastRow() - 1, 2).getValues();
@@ -169,8 +182,23 @@ function readSettings() {
     if (k === '時區') o.tz = String(row[1]);
     else if (k === '幣別') o.cur = String(row[1]);
     else if (k === '預設每盒支數') o.perBox = Number(row[1]) || 20;
+    else if (k === '地圖樣式') o.mapStyle = String(row[1]) || 'voyager';
   });
   return o;
+}
+
+// 設定 key-value：更新既有 key，沒有就補一列
+function setSetting(key, value) {
+  ensureReady_();
+  var s = sh(SHEET_SETTINGS);
+  var last = s.getLastRow();
+  if (last >= 2) {
+    var keys = s.getRange(2, 1, last - 1, 1).getValues();
+    for (var i = 0; i < keys.length; i++)
+      if (String(keys[i][0]).trim() === key) { s.getRange(i + 2, 2).setValue(value); return readSettings(); }
+  }
+  s.appendRow([key, value]);
+  return readSettings();
 }
 
 function getReasons() {
@@ -244,6 +272,7 @@ function getMonthRecords(tab) {
       cat: String(row[R_CAT - 1] || ''),
       pouchId: String(row[R_POUCH - 1] || ''),
       people: String(row[R_PEOPLE - 1] || '').split(PEOPLE_SEP).filter(Boolean),
+      place: String(row[R_PLACE - 1] || ''),
       month: tab
     });
   });
@@ -280,6 +309,7 @@ function addSmoke(payload) {
   row[R_CAT - 1] = cat;
   row[R_POUCH - 1] = pouchId;
   row[R_PEOPLE - 1] = joinPeople_(payload.people);
+  row[R_PLACE - 1] = String(payload.place || '');
   s.appendRow(row);
   consumeInventory_(cat, row[R_PID - 1], pouchId);
   return state_(tab);
@@ -312,6 +342,7 @@ function updateSmoke(payload) {
   }
 
   if (payload.people != null) loc.sheet.getRange(loc.row, R_PEOPLE).setValue(joinPeople_(payload.people));
+  if (payload.place != null) loc.sheet.getRange(loc.row, R_PLACE).setValue(String(payload.place));
 
   if (payload.timeMillis) {
     var nd = new Date(payload.timeMillis);
@@ -507,6 +538,94 @@ function reorderPeople(names) {
     s.getRange(i + 2, PE_ORDER).setValue(idx < 0 ? 999 : idx);
   }
   return getPeople();
+}
+
+/* ------------------------------------------------------------------ 地點 CRUD（結構同人物，多座標） */
+
+function getPlaces() {
+  var s = sh(SHEET_PLACES);
+  if (!s || s.getLastRow() < 2) return [];
+  var v = s.getRange(2, 1, s.getLastRow() - 1, 5).getValues();
+  var out = [];
+  v.forEach(function (row, i) {
+    if (String(row[LO_NAME - 1]).trim() === '') return;
+    var active = row[LO_ACTIVE - 1] !== false && String(row[LO_ACTIVE - 1]).toUpperCase() !== 'FALSE';
+    if (!active) return;
+    var lat = row[LO_LAT - 1], lng = row[LO_LNG - 1];
+    out.push({
+      name: String(row[LO_NAME - 1]).trim(),
+      order: Number(row[LO_ORDER - 1]) || i,
+      lat: (lat === '' || lat == null) ? null : Number(lat),
+      lng: (lng === '' || lng == null) ? null : Number(lng),
+      row: i + 2
+    });
+  });
+  out.sort(function (a, b) { return a.order - b.order; });
+  return out;
+}
+
+function addPlace(p) {
+  ensureReady_();
+  var name = String(p.name || '').trim();
+  if (!name) throw new Error('地點名稱不能空白');
+  if (getPlaces().some(function (x) { return x.name === name; })) throw new Error('這個地點已經有了');
+  var s = sh(SHEET_PLACES);
+  var lat = (p.lat == null || p.lat === '') ? '' : Number(p.lat);
+  var lng = (p.lng == null || p.lng === '') ? '' : Number(p.lng);
+  s.appendRow([name, s.getLastRow(), true, lat, lng]);
+  return getPlaces();
+}
+
+function setPlaceCoord(p) {
+  var s = sh(SHEET_PLACES);
+  if (!s || s.getLastRow() < 2) return getPlaces();
+  var v = s.getRange(2, 1, s.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < v.length; i++)
+    if (String(v[i][0]).trim() === String(p.name).trim()) {
+      s.getRange(i + 2, LO_LAT).setValue((p.lat == null || p.lat === '') ? '' : Number(p.lat));
+      s.getRange(i + 2, LO_LNG).setValue((p.lng == null || p.lng === '') ? '' : Number(p.lng));
+      break;
+    }
+  return getPlaces();
+}
+
+function deletePlace(name) {
+  var s = sh(SHEET_PLACES);
+  if (!s || s.getLastRow() < 2) return getPlaces();
+  var v = s.getRange(2, 1, s.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < v.length; i++)
+    if (String(v[i][0]).trim() === String(name).trim()) { s.deleteRow(i + 2); break; }
+  return getPlaces();
+}
+
+function renamePlace(oldName, newName) {
+  newName = String(newName || '').trim();
+  oldName = String(oldName || '').trim();
+  if (!newName) throw new Error('名稱不能空白');
+  if (newName === oldName) return getPlaces();
+  var s = sh(SHEET_PLACES);
+  var v = s.getRange(2, 1, s.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < v.length; i++)
+    if (String(v[i][0]).trim() === oldName) s.getRange(i + 2, LO_NAME).setValue(newName);
+  ss().getSheets().forEach(function (sheet) {
+    if (!/^\d{4}-\d{2}$/.test(sheet.getName())) return;
+    var last = sheet.getLastRow(); if (last < 2) return;
+    var rng = sheet.getRange(2, R_PLACE, last - 1, 1), vals = rng.getValues(), changed = false;
+    for (var j = 0; j < vals.length; j++) if (String(vals[j][0]) === oldName) { vals[j][0] = newName; changed = true; }
+    if (changed) rng.setValues(vals);
+  });
+  return getPlaces();
+}
+
+function reorderPlaces(names) {
+  var s = sh(SHEET_PLACES);
+  if (!s || s.getLastRow() < 2) return getPlaces();
+  var col = s.getRange(2, LO_NAME, s.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < col.length; i++) {
+    var idx = names.indexOf(String(col[i][0]).trim());
+    s.getRange(i + 2, LO_ORDER).setValue(idx < 0 ? 999 : idx);
+  }
+  return getPlaces();
 }
 
 /* ------------------------------------------------------------------ 菸品 CRUD */

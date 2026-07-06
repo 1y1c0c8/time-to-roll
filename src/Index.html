@@ -8,6 +8,9 @@
 <link href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
 <style>
 :root{
   --bg:#f4f3ef; --card:#ffffff; --ink:#1c1b18; --muted:#8a877f;
@@ -63,6 +66,8 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
 .row .x:disabled{opacity:.25}
 .dragh{color:var(--muted);font-size:20px;padding:2px 6px 2px 2px;cursor:grab;touch-action:none;display:flex;align-items:center}
 .sortable-ghost{opacity:.4}
+#pickMap,#statMap{height:300px;border-radius:12px;background:#e7e5de}
+.leaflet-container{font-family:inherit}
 .empty{padding:28px 16px;text-align:center;color:var(--muted);font-size:14px;line-height:1.6}
 .hide{display:none!important}
 
@@ -156,6 +161,8 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
       <div id="reasonChips" class="chips"></div>
       <div class="sect-title">跟誰（可選）</div>
       <div id="peopleChips" class="chips"></div>
+      <div class="sect-title">在哪（可選）</div>
+      <div id="placeChips" class="chips"></div>
     </div>
 
     <div class="sect-title">今天的紀錄</div>
@@ -202,6 +209,24 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
     <div id="peopleMgr" class="card"></div>
 
     <div class="sect-title" style="display:flex;justify-content:space-between;align-items:center">
+      <span>地點</span>
+      <button class="mini" onclick="openPlaceSheet()"><i class="ti ti-plus"></i> 新增地點</button>
+    </div>
+    <div id="placeMgr" class="card"></div>
+
+    <div class="sect-title">偏好</div>
+    <div class="card">
+      <div class="field"><label>幣別</label><input id="setCur" onchange="savePref('幣別',this.value)"></div>
+      <div class="field"><label>預設每盒支數</label><input id="setPerBox" class="num" type="number" inputmode="numeric" onchange="savePref('預設每盒支數',this.value)"></div>
+      <div class="field"><label>地圖樣式</label><select id="setMapStyle" onchange="savePref('地圖樣式',this.value)">
+        <option value="voyager">Google 風</option>
+        <option value="positron">乾淨淺色</option>
+        <option value="osm">標準 OSM</option>
+        <option value="satellite">衛星圖</option>
+      </select></div>
+    </div>
+
+    <div class="sect-title" style="display:flex;justify-content:space-between;align-items:center">
       <span>菸品</span>
       <button class="mini" onclick="openProdSheet()"><i class="ti ti-plus"></i> 新增菸品</button>
     </div>
@@ -229,6 +254,8 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
     <div id="editReason" class="chips"></div>
     <div class="sect-title">跟誰（可選）</div>
     <div id="editPeople" class="chips"></div>
+    <div class="sect-title">在哪（可選）</div>
+    <div id="editPlace" class="chips"></div>
     <div class="field" style="margin-top:6px"><label>時間</label><input type="datetime-local" id="editTime"></div>
     <button class="sheet-btn primary" onclick="saveEdit()">更新</button>
     <button class="sheet-btn del" onclick="delEdit()">刪除這根</button>
@@ -279,6 +306,34 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
   </div>
 </div>
 
+<!-- 地點編輯 -->
+<div class="overlay" id="placeSheet" onclick="if(event.target===this)closeSheets()">
+  <div class="sheet">
+    <div class="grip"></div>
+    <div class="sheet-title" id="placeSheetTitle">新增地點</div>
+    <div class="field"><label>名稱</label><input id="placeName" placeholder="例：陽台、公司樓下"></div>
+    <div class="field"><label>座標</label><span id="placeCoord" class="num" style="color:var(--muted);font-size:14px">尚未設定座標</span></div>
+    <button class="sheet-btn edit" onclick="placeGrabGPS()"><i class="ti ti-current-location"></i> 抓目前位置</button>
+    <button class="sheet-btn edit" onclick="openMapPick()"><i class="ti ti-map-pin"></i> 在地圖上點選</button>
+    <button class="sheet-btn cancel" id="placeClearBtn" onclick="placeClearCoord()">清除座標</button>
+    <button class="sheet-btn primary" onclick="savePlace()">儲存</button>
+    <button class="sheet-btn del hide" id="pfDelPlace" onclick="rmPlaceFromSheet()">刪除地點</button>
+    <button class="sheet-btn cancel" onclick="closeSheets()">取消</button>
+  </div>
+</div>
+
+<!-- 地圖點選 -->
+<div class="overlay" id="mapPickSheet" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="sheet">
+    <div class="grip"></div>
+    <div class="sheet-title">在地圖上點選位置</div>
+    <div style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:8px">點地圖任一處放置圖釘，或拖曳圖釘微調</div>
+    <div id="pickMap"></div>
+    <button class="sheet-btn primary" onclick="confirmMapPick()">使用這個位置</button>
+    <button class="sheet-btn cancel" onclick="document.getElementById('mapPickSheet').classList.remove('show')">取消</button>
+  </div>
+</div>
+
 <div class="save">
   <button id="saveBtn" onclick="doSmoke()">記一根</button>
 </div>
@@ -295,8 +350,16 @@ function localDateStr(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(
 function ago(ms){var s=(Date.now()-ms)/1000;if(s<90)return '剛剛';var m=s/60;if(m<60)return Math.floor(m)+' 分鐘前';var h=m/60;if(h<24)return Math.floor(h)+' 小時前';return Math.floor(h/24)+' 天前';}
 function catTag(c){return c==='加熱菸'?'加熱':c==='盒菸'?'盒菸':c==='捲菸'?'捲菸':'';}
 
-var S={settings:{cur:'NT$'},reasons:[],people:[],products:[],pouches:{using:[],done:[]},records:[],thisMonth:''};
-var selP=null, selR=null, selPouch=null, selPeople=[], editing=null, prodEditId=null;
+var S={settings:{cur:'NT$',mapStyle:'voyager'},reasons:[],people:[],places:[],products:[],pouches:{using:[],done:[]},records:[],thisMonth:''};
+var selP=null, selR=null, selPouch=null, selPeople=[], selPlace=null, editing=null, prodEditId=null;
+var placeEditName=null, placeTmp={name:'',lat:null,lng:null}, pickMap=null, pickMarker=null;
+var BASEMAPS={
+  voyager:{url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',sub:'abcd'},
+  positron:{url:'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',sub:'abcd'},
+  osm:{url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',sub:'abc'},
+  satellite:{url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',sub:''}
+};
+function tileLayerFor(style){var b=BASEMAPS[style]||BASEMAPS.voyager;var o={maxZoom:19,attribution:''};if(b.sub)o.subdomains=b.sub;return L.tileLayer(b.url,o);}
 
 function show(id,on){$(id).classList.toggle('hide',!on);}
 function findP(id){for(var i=0;i<S.products.length;i++)if(S.products[i].id===id)return S.products[i];return null;}
@@ -322,7 +385,7 @@ function onBoot(d){
   renderAll();
 }
 
-function renderAll(){renderHero();renderProdChips();renderPouchPick();renderReasonChips();renderPeopleChips();renderTodayList();renderInv();renderReasonMgr();renderPeopleMgr();renderProdMgr();updateSaveBtn();}
+function renderAll(){renderHero();renderProdChips();renderPouchPick();renderReasonChips();renderPeopleChips();renderPlaceChips();renderTodayList();renderInv();renderReasonMgr();renderPeopleMgr();renderPlaceMgr();renderProdMgr();renderPrefs();updateSaveBtn();}
 
 function todayRecords(){var t=localDateStr(new Date());return S.records.filter(function(r){return r.dateStr===t;});}
 
@@ -394,12 +457,35 @@ function quickAddPerson(){
     .withFailureHandler(err).addPerson(n);
 }
 
+function renderPlaceChips(){
+  var el=$('placeChips');if(!el)return;
+  el.innerHTML=S.places.map(function(pl){
+    return '<button class="chip'+(selPlace===pl.name?' on':'')+'" onclick="pickPlace(\''+esc(pl.name)+'\')">'+(pl.lat!=null?'<i class="ti ti-map-pin" style="font-size:12px"></i> ':'')+esc(pl.name)+'</button>';
+  }).join('')+'<button class="chip add" onclick="quickAddPlace()"><i class="ti ti-plus"></i> 新增地點</button>';
+}
+function pickPlace(n){selPlace=(selPlace===n?null:n);renderPlaceChips();}
+function quickAddPlace(){
+  var n=prompt('新增地點（例：某某酒吧）');if(!n||!n.trim())return;n=n.trim();
+  var save=function(lat,lng){
+    google.script.run.withSuccessHandler(function(ps){S.places=ps;selPlace=n;renderPlaceChips();renderPlaceMgr();toast(lat!=null?'已新增（含目前位置）':'已新增（無座標）');})
+      .withFailureHandler(err).addPlace({name:n,lat:lat,lng:lng});
+  };
+  if(navigator.geolocation){
+    toast('抓取目前位置…');
+    navigator.geolocation.getCurrentPosition(
+      function(p){save(p.coords.latitude,p.coords.longitude);},
+      function(){toast('抓不到位置，先存無座標');save(null,null);},
+      {enableHighAccuracy:true,timeout:10000,maximumAge:60000});
+  }else{save(null,null);}
+}
+
 function renderTodayList(){
   var tr=todayRecords();var el=$('todayList');
   if(!tr.length){el.innerHTML='<div class="empty">今天還沒有紀錄</div>';return;}
   el.innerHTML=tr.map(function(r){
     var parts=[r.productName,catTag(r.cat)];
     if(r.people&&r.people.length)parts.push('跟 '+r.people.join('、'));
+    if(r.place)parts.push('@ '+r.place);
     var sub=parts.filter(Boolean).join(' · ');
     return '<div class="row tap" onclick="openEdit(\''+r.id+'\')">'+
       '<div class="mid"><div class="t1">'+esc(r.reason||'（無原因）')+'</div>'+(sub?'<div class="t2">'+esc(sub)+'</div>':'')+'</div>'+
@@ -412,15 +498,15 @@ function doSmoke(){
   if(isRollSel()&&!selPouch){toast('先選或開一包菸草包');return;}
   if(!selR){toast('先選原因');return;}
   $('saveBtn').disabled=true;
-  google.script.run.withSuccessHandler(function(st){toast('已記一根 ✓');selPeople=[];renderPeopleChips();applyState(st);})
+  google.script.run.withSuccessHandler(function(st){toast('已記一根 ✓');selPeople=[];selPlace=null;renderPeopleChips();renderPlaceChips();applyState(st);})
     .withFailureHandler(function(e){$('saveBtn').disabled=false;err(e);})
-    .addSmoke({productId:selP,reason:selR,pouchId:isRollSel()?selPouch:'',people:selPeople.slice()});
+    .addSmoke({productId:selP,reason:selR,pouchId:isRollSel()?selPouch:'',people:selPeople.slice(),place:selPlace||''});
 }
 
 /* ---- edit a record ---- */
 function openEdit(id){
   var r=null;for(var i=0;i<S.records.length;i++)if(S.records[i].id===id){r=S.records[i];break;}
-  if(!r)return;editing={id:r.id,month:r.month,productId:r.productId,reason:r.reason,pouchId:r.pouchId||'',people:(r.people||[]).slice()};
+  if(!r)return;editing={id:r.id,month:r.month,productId:r.productId,reason:r.reason,pouchId:r.pouchId||'',people:(r.people||[]).slice(),place:r.place||''};
   editing._origTime=toLocalInput(r.time);$('editTime').value=editing._origTime;
   renderEditChips();$('editSheet').classList.add('show');
 }
@@ -445,8 +531,12 @@ function renderEditChips(){
   $('editPeople').innerHTML=S.people.map(function(pp){
     return '<button class="chip'+(editing.people.indexOf(pp.name)>=0?' on':'')+'" onclick="editTogglePerson(\''+esc(pp.name)+'\')">'+esc(pp.name)+'</button>';
   }).join('')||'<div class="empty" style="padding:6px 0;text-align:left">還沒有人物，去設定新增</div>';
+  $('editPlace').innerHTML=S.places.map(function(pl){
+    return '<button class="chip'+(editing.place===pl.name?' on':'')+'" onclick="editPickPlace(\''+esc(pl.name)+'\')">'+esc(pl.name)+'</button>';
+  }).join('')||'<div class="empty" style="padding:6px 0;text-align:left">還沒有地點，去設定新增</div>';
 }
 function editTogglePerson(n){var i=editing.people.indexOf(n);if(i>=0)editing.people.splice(i,1);else editing.people.push(n);renderEditChips();}
+function editPickPlace(n){editing.place=(editing.place===n?'':n);renderEditChips();}
 function editPickP(id){editing.productId=id;var p=findP(id);if(p&&p.cat==='捲菸'){var us=usingOf(id);editing.pouchId=us.length?us[0].id:(editing.pouchId||'');}else{editing.pouchId='';}renderEditChips();}
 function editPickPouch(id){editing.pouchId=id;renderEditChips();}
 function editPickR(n){editing.reason=n;renderEditChips();}
@@ -549,6 +639,116 @@ function rmPerson(n){
   if(!confirm('刪除人物「'+n+'」？歷史紀錄會保留。'))return;
   google.script.run.withSuccessHandler(function(ps){S.people=ps;var i=selPeople.indexOf(n);if(i>=0)selPeople.splice(i,1);renderPeopleMgr();renderPeopleChips();toast('已刪除');})
     .withFailureHandler(err).deletePerson(n);
+}
+
+/* ---- Leaflet 預設圖釘圖檔（CDN，避免圖釘不顯示）---- */
+if(typeof L!=='undefined'){L.Icon.Default.mergeOptions({iconRetinaUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',iconUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',shadowUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png'});}
+
+/* ---- settings: places ---- */
+function renderPlaceMgr(){
+  var el=$('placeMgr');if(!el)return;
+  var rows=S.places.map(function(pl){
+    return '<div class="row prow2" data-name="'+esc(pl.name)+'">'+
+      '<span class="dragh"><i class="ti ti-menu-2"></i></span>'+
+      '<div class="mid tap" onclick="openPlaceSheet(\''+esc(pl.name)+'\')"><div class="t1">'+esc(pl.name)+' <i class="ti ti-pencil" style="font-size:12px;color:var(--muted)"></i></div><div class="t2">'+(pl.lat!=null?'<i class="ti ti-map-pin" style="font-size:11px"></i> 已定位':'無座標')+'</div></div>'+
+      '<button class="x" onclick="rmPlace(\''+esc(pl.name)+'\')"><i class="ti ti-trash"></i></button></div>';
+  }).join('')||'<div class="empty">還沒有地點，點右上「新增地點」</div>';
+  el.innerHTML='<div id="placeList">'+rows+'</div>';
+  initPlaceSort();
+}
+function initPlaceSort(){
+  var list=$('placeList');if(!list||typeof Sortable==='undefined')return;
+  if(list._sortable)list._sortable.destroy();
+  list._sortable=Sortable.create(list,{handle:'.dragh',animation:150,onEnd:function(){
+    var names=[].slice.call(list.querySelectorAll('.prow2')).map(function(n){return n.getAttribute('data-name');});
+    var map={};S.places.forEach(function(p){map[p.name]=p;});
+    S.places=names.map(function(n){return map[n];}).filter(Boolean);
+    renderPlaceChips();
+    google.script.run.withSuccessHandler(function(ps){S.places=ps;renderPlaceChips();}).withFailureHandler(err).reorderPlaces(names);
+  }});
+}
+function rmPlace(n){
+  if(!confirm('刪除地點「'+n+'」？歷史紀錄會保留。'))return;
+  google.script.run.withSuccessHandler(function(ps){S.places=ps;if(selPlace===n)selPlace=null;renderPlaceMgr();renderPlaceChips();toast('已刪除');})
+    .withFailureHandler(err).deletePlace(n);
+}
+
+/* ---- place add/edit sheet ---- */
+function openPlaceSheet(name){
+  if(typeof name==='string'){
+    placeEditName=name;
+    var pl=S.places.filter(function(x){return x.name===name;})[0]||{name:name};
+    placeTmp={name:name,lat:(pl.lat==null?null:pl.lat),lng:(pl.lng==null?null:pl.lng)};
+    $('placeSheetTitle').textContent='編輯地點';$('pfDelPlace').classList.remove('hide');
+  }else{
+    placeEditName=null;placeTmp={name:'',lat:null,lng:null};
+    $('placeSheetTitle').textContent='新增地點';$('pfDelPlace').classList.add('hide');
+  }
+  $('placeName').value=placeTmp.name;renderPlaceCoord();$('placeSheet').classList.add('show');
+}
+function renderPlaceCoord(){
+  var el=$('placeCoord');
+  if(placeTmp.lat!=null){el.style.color='var(--accent)';el.textContent='📍 '+placeTmp.lat.toFixed(5)+', '+placeTmp.lng.toFixed(5);}
+  else{el.style.color='var(--muted)';el.textContent='尚未設定座標';}
+}
+function placeGrabGPS(){
+  if(!navigator.geolocation){toast('這裝置無法定位');return;}
+  toast('抓取目前位置…');
+  navigator.geolocation.getCurrentPosition(
+    function(p){placeTmp.lat=p.coords.latitude;placeTmp.lng=p.coords.longitude;renderPlaceCoord();toast('已抓到位置');},
+    function(e){toast('抓不到位置（code '+e.code+'）');},
+    {enableHighAccuracy:true,timeout:12000,maximumAge:0});
+}
+function placeClearCoord(){placeTmp.lat=null;placeTmp.lng=null;renderPlaceCoord();}
+function savePlace(){
+  var nm=$('placeName').value.trim();if(!nm){toast('要填名稱');return;}
+  if(placeEditName){
+    var setCoord=function(){google.script.run.withSuccessHandler(function(ps){S.places=ps;closeSheets();renderPlaceMgr();renderPlaceChips();toast('已儲存');}).withFailureHandler(err).setPlaceCoord({name:nm,lat:placeTmp.lat,lng:placeTmp.lng});};
+    if(nm!==placeEditName){
+      google.script.run.withSuccessHandler(function(ps){S.places=ps;if(selPlace===placeEditName)selPlace=nm;setCoord();}).withFailureHandler(err).renamePlace(placeEditName,nm);
+    }else setCoord();
+  }else{
+    google.script.run.withSuccessHandler(function(ps){S.places=ps;closeSheets();renderPlaceMgr();renderPlaceChips();toast('已新增');}).withFailureHandler(err).addPlace({name:nm,lat:placeTmp.lat,lng:placeTmp.lng});
+  }
+}
+function rmPlaceFromSheet(){
+  if(!confirm('刪除地點「'+placeEditName+'」？歷史紀錄會保留。'))return;
+  google.script.run.withSuccessHandler(function(ps){S.places=ps;if(selPlace===placeEditName)selPlace=null;closeSheets();renderPlaceMgr();renderPlaceChips();toast('已刪除');}).withFailureHandler(err).deletePlace(placeEditName);
+}
+
+/* ---- map pin picker ---- */
+function openMapPick(){
+  $('mapPickSheet').classList.add('show');
+  setTimeout(function(){
+    var here=(placeTmp.lat!=null)?[placeTmp.lat,placeTmp.lng]:[22.9997,120.2270];
+    var z=(placeTmp.lat!=null)?16:13;
+    if(!pickMap){
+      pickMap=L.map('pickMap').setView(here,z);
+      pickMap._tile=tileLayerFor(S.settings.mapStyle);pickMap._tile.addTo(pickMap);
+      pickMarker=L.marker(here,{draggable:true}).addTo(pickMap);
+      pickMap.on('click',function(e){pickMarker.setLatLng(e.latlng);});
+    }else{
+      if(pickMap._tile)pickMap.removeLayer(pickMap._tile);
+      pickMap._tile=tileLayerFor(S.settings.mapStyle);pickMap._tile.addTo(pickMap);
+      pickMap.setView(here,z);pickMarker.setLatLng(here);
+    }
+    pickMap.invalidateSize();
+  },260);
+}
+function confirmMapPick(){
+  if(pickMarker){var ll=pickMarker.getLatLng();placeTmp.lat=ll.lat;placeTmp.lng=ll.lng;renderPlaceCoord();}
+  $('mapPickSheet').classList.remove('show');
+}
+
+/* ---- prefs ---- */
+function renderPrefs(){
+  if(!$('setCur'))return;
+  $('setCur').value=S.settings.cur||'';
+  $('setPerBox').value=S.settings.perBox||20;
+  $('setMapStyle').value=S.settings.mapStyle||'voyager';
+}
+function savePref(key,val){
+  google.script.run.withSuccessHandler(function(s){S.settings=s;renderPrefs();renderProdMgr();renderInv();toast('已更新');}).withFailureHandler(err).setSetting(key,val);
 }
 
 /* ---- settings: products ---- */
