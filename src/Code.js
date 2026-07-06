@@ -51,8 +51,9 @@ var POUCH_USING = '使用中', POUCH_DONE = '已用完';
 
 /* ------------------------------------------------------------------ web entry */
 
-function doGet() {
-  return HtmlService.createHtmlOutputFromFile('Index')
+function doGet(e) {
+  var file = (e && e.parameter && e.parameter.probe) ? 'Probe' : 'Index';   // ?probe=1 → 定位/地圖可行性測試（暫時）
+  return HtmlService.createHtmlOutputFromFile(file)
     .setTitle('🚬 Time to Roll')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover');
 }

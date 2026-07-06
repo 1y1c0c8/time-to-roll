@@ -1,0 +1,66 @@
+<!DOCTYPE html><html lang="zh-Hant"><head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+body{font-family:system-ui,"Noto Sans TC",sans-serif;margin:0;padding:16px;background:#f4f3ef;color:#1c1b18}
+h2{font-size:16px;margin:0 0 12px}
+button{border:0;background:#0f766e;color:#fff;border-radius:12px;padding:14px 16px;font-size:16px;font-weight:700;width:100%;margin:6px 0;cursor:pointer}
+.box{background:#fff;border:1px solid #e7e5de;border-radius:14px;padding:14px;margin-bottom:14px}
+pre{white-space:pre-wrap;word-break:break-all;font-size:13px;background:#f4f3ef;padding:10px;border-radius:8px;margin:8px 0 0}
+#map{height:280px;border-radius:12px;margin-top:8px;background:#e7e5de}
+.ok{color:#2f7d4f;font-weight:700}.bad{color:#c0492f;font-weight:700}
+.st{font-size:13px;margin-top:6px}
+</style></head><body>
+<h2>🚬 定位 / 地圖 可行性測試</h2>
+
+<div class="box">
+  <b>1. 抓目前位置（GPS）</b>
+  <button onclick="testGeo()">抓目前位置</button>
+  <pre id="geoOut">尚未測試</pre>
+</div>
+
+<div class="box">
+  <b>2. 地圖 + 熱力圖（Leaflet）</b>
+  <div id="libSt" class="st">載入套件中…</div>
+  <div id="tileSt" class="st">地圖磚：等待中…</div>
+  <div id="heatSt" class="st">熱力圖：等待中…</div>
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+<script>
+function set(id,cls,txt){var el=document.getElementById(id);el.className='st '+cls;el.textContent=txt;}
+function testGeo(){
+  var o=document.getElementById('geoOut');
+  if(!navigator.geolocation){o.className='bad';o.textContent='這個環境沒有 navigator.geolocation';return;}
+  o.className='';o.textContent='請求中…（可能會跳權限詢問，請按允許）';
+  navigator.geolocation.getCurrentPosition(function(p){
+    o.className='ok';
+    o.textContent='✅ 成功\n緯度 '+p.coords.latitude.toFixed(6)+'\n經度 '+p.coords.longitude.toFixed(6)+'\n精度 '+Math.round(p.coords.accuracy)+' m';
+  },function(e){
+    var m={1:'PERMISSION_DENIED（權限被擋）',2:'POSITION_UNAVAILABLE',3:'TIMEOUT'};
+    o.className='bad';
+    o.textContent='❌ 失敗 code='+e.code+' '+(m[e.code]||'?')+'\n'+(e.message||'');
+  },{enableHighAccuracy:true,timeout:12000,maximumAge:0});
+}
+window.onload=function(){
+  try{
+    if(typeof L==='undefined'){set('libSt','bad','❌ Leaflet 沒載到（CDN 被擋）');return;}
+    set('libSt','ok','✅ Leaflet 套件載入成功');
+    var map=L.map('map').setView([22.9997,120.2270],13);   // 台南成大附近
+    var tiles=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'});
+    var got=false;
+    tiles.on('load',function(){if(!got){got=true;set('tileSt','ok','✅ 地圖磚載入成功（看得到地圖就對了）');}});
+    tiles.on('tileerror',function(){set('tileSt','bad','❌ 地圖磚載入失敗（被擋或沒網路）');});
+    tiles.addTo(map);
+    if(typeof L.heatLayer==='function'){
+      L.heatLayer([[22.9997,120.2270,0.9],[23.0010,120.2200,0.6],[22.9950,120.2300,0.7],[23.0100,120.2100,0.4],[22.9997,120.2280,0.8]],{radius:35,blur:22,maxZoom:17}).addTo(map);
+      set('heatSt','ok','✅ 熱力圖套件 OK（地圖上應有紅/黃色暈染）');
+    }else{ set('heatSt','bad','❌ 熱力圖套件沒載到'); }
+  }catch(err){ set('libSt','bad','❌ 例外：'+err.message); }
+};
+</script>
+</body></html>
