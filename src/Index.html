@@ -468,7 +468,8 @@ function renderReasonMgr(){
   var rows=S.reasons.map(function(r){
     return '<div class="row rrow" data-name="'+esc(r.name)+'">'+
       '<span class="dragh"><i class="ti ti-menu-2"></i></span>'+
-      '<div class="mid tap" onclick="editReasonName(\''+esc(r.name)+'\')"><div class="t1">'+esc(r.name)+' <i class="ti ti-pencil" style="font-size:12px;color:var(--muted)"></i></div></div>'+
+      '<div class="mid tap" onclick="editReasonName(\''+esc(r.name)+'\')"><div class="t1">'+esc(r.name)+' <i class="ti ti-pencil" style="font-size:12px;color:var(--muted)"></i>'+(r.stats?'':' <span class="tag" style="color:var(--muted);font-weight:600">不計入統計</span>')+'</div></div>'+
+      '<button class="x" style="color:'+(r.stats?'var(--accent)':'var(--muted)')+'" onclick="toggleReasonStats(\''+esc(r.name)+'\','+(r.stats?'false':'true')+')"><i class="ti ti-chart-bar"></i></button>'+
       '<button class="x" onclick="rmReason(\''+esc(r.name)+'\')"><i class="ti ti-trash"></i></button></div>';
   }).join('')||'<div class="empty">還沒有原因，從下面新增</div>';
   el.innerHTML='<div id="reasonList">'+rows+'</div>'+
@@ -497,6 +498,10 @@ function addReasonMgr(){
   var v=$('newReason').value;if(!v.trim())return;
   google.script.run.withSuccessHandler(function(rs){S.reasons=rs;renderReasonMgr();renderReasonChips();toast('已新增');})
     .withFailureHandler(err).addReason(v);
+}
+function toggleReasonStats(name,include){
+  google.script.run.withSuccessHandler(function(rs){S.reasons=rs;renderReasonMgr();toast(include?'已計入統計':'已排除統計');})
+    .withFailureHandler(err).setReasonStats(name,include);
 }
 function rmReason(n){
   if(!confirm('刪除原因「'+n+'」？歷史紀錄會保留。'))return;

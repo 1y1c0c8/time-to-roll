@@ -36,8 +36,8 @@ var RECORD_HEADERS = ['id', '時間', '原因', '菸品id', '菸品名稱', '類
 var PEOPLE_SEP = '、';   // 多個人名以此連接存一格
 
 // 原因 columns (1-based, fixed)
-var RS_NAME = 1, RS_ORDER = 2, RS_ACTIVE = 3;
-var REASON_HEADERS = ['名稱', '排序', '啟用'];
+var RS_NAME = 1, RS_ORDER = 2, RS_ACTIVE = 3, RS_STATS = 4;   // RS_STATS：是否計入統計，空白/TRUE=計入、FALSE=排除
+var REASON_HEADERS = ['名稱', '排序', '啟用', '計入統計'];
 
 // 人物 columns（結構同原因）
 var SHEET_PEOPLE = '人物';
@@ -146,6 +146,10 @@ function migrate_() {
   if (p && String(p.getRange(1, P_POUCHES).getValue()).trim() !== '未開包數') {
     p.getRange(1, P_POUCHES).setValue('未開包數').setFontWeight('bold').setBackground('#e3efed');
   }
+  var rs = sh(SHEET_REASONS);
+  if (rs && String(rs.getRange(1, RS_STATS).getValue()).trim() !== '計入統計') {
+    rs.getRange(1, RS_STATS).setValue('計入統計').setFontWeight('bold').setBackground('#e3efed');
+  }
   // 月分頁補上「人物」表頭（R_PEOPLE 欄）
   ss().getSheets().forEach(function (s) {
     if (/^\d{4}-\d{2}$/.test(s.getName()) && String(s.getRange(1, R_PEOPLE).getValue()).trim() !== '人物') {
@@ -171,16 +175,27 @@ function readSettings() {
 function getReasons() {
   var s = sh(SHEET_REASONS);
   if (!s || s.getLastRow() < 2) return [];
-  var v = s.getRange(2, 1, s.getLastRow() - 1, 3).getValues();
+  var v = s.getRange(2, 1, s.getLastRow() - 1, 4).getValues();
   var out = [];
   v.forEach(function (row, i) {
     if (String(row[RS_NAME - 1]).trim() === '') return;
     var active = row[RS_ACTIVE - 1] !== false && String(row[RS_ACTIVE - 1]).toUpperCase() !== 'FALSE';
     if (!active) return;
-    out.push({ name: String(row[RS_NAME - 1]).trim(), order: Number(row[RS_ORDER - 1]) || i, row: i + 2 });
+    var stats = row[RS_STATS - 1] !== false && String(row[RS_STATS - 1]).toUpperCase() !== 'FALSE';  // 空白預設計入
+    out.push({ name: String(row[RS_NAME - 1]).trim(), order: Number(row[RS_ORDER - 1]) || i, stats: stats, row: i + 2 });
   });
   out.sort(function (a, b) { return a.order - b.order; });
   return out;
+}
+
+// 設定某原因是否計入統計
+function setReasonStats(name, include) {
+  var s = sh(SHEET_REASONS);
+  if (!s || s.getLastRow() < 2) return getReasons();
+  var v = s.getRange(2, 1, s.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < v.length; i++)
+    if (String(v[i][0]).trim() === String(name).trim()) { s.getRange(i + 2, RS_STATS).setValue(!!include); break; }
+  return getReasons();
 }
 
 function getProducts() {
@@ -365,7 +380,7 @@ function addReason(name) {
   if (!name) throw new Error('原因不能空白');
   if (getReasons().some(function (r) { return r.name === name; })) throw new Error('這個原因已經有了');
   var s = sh(SHEET_REASONS);
-  s.appendRow([name, s.getLastRow(), true]);
+  s.appendRow([name, s.getLastRow(), true, true]);
   return getReasons();
 }
 
@@ -715,9 +730,13 @@ function getStats(gran, key) {
     maWin = 3; rangeLabel = key;
   }
 
+  var excluded = {};   // 標記為「不計入統計」的原因
+  getReasons().forEach(function (r) { if (!r.stats) excluded[r.name] = 1; });
+
   var recs = readRecordsBetween_(start, end);
   var reason = {}, hours = [0, 0, 0, 0], total = 0;
   recs.forEach(function (r) {
+    if (excluded[r.reason]) return;   // 這類紀錄完全不進統計
     var d = new Date(r.time);
     var bi = bucketOf(d);
     if (bi >= 0 && bi < buckets.length) buckets[bi].count++;
