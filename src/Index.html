@@ -448,7 +448,14 @@ function renderReasonChips(){
 }
 function pickR(n){selR=n;renderReasonChips();updateSaveBtn();}
 
-function updateSaveBtn(){$('saveBtn').disabled=!(selP&&selR&&(!isRollSel()||selPouch));}
+function updateSaveBtn(){
+  var b=$('saveBtn'),msg='記一根';
+  if(!selP)msg='先選菸品';
+  else if(isRollSel()&&!selPouch)msg='先開／選一包菸草包';
+  else if(!selR)msg='先選一個原因';
+  b.textContent=msg;
+  b.disabled=(msg!=='記一根');
+}
 
 function quickAddReason(){
   var n=prompt('新增原因');if(!n)return;
