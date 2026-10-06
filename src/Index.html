@@ -379,7 +379,8 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
 
 <script>
 var $=function(id){return document.getElementById(id);};
-function toast(m){var t=$('toast');t.textContent=m;t.classList.add('show');setTimeout(function(){t.classList.remove('show');},1600);}
+var _toastT=null;
+function toast(m,ms){var t=$('toast');t.textContent=m;t.classList.add('show');if(_toastT)clearTimeout(_toastT);_toastT=setTimeout(function(){t.classList.remove('show');},ms||1600);}
 function err(e){toast('發生錯誤：'+(e&&e.message?e.message:e));}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function pad(n){return n<10?'0'+n:''+n;}
@@ -536,6 +537,15 @@ function renderTodayList(){
   }).join('');
 }
 
+function smokeBubble_(){
+  var p=findP(selP);
+  if(p&&p.isStick){
+    var B=p.perBox||20, N=p.left||0, msg;
+    if(N<=0)msg='已記一根 · 這款沒了，記得補貨';
+    else{var bl=N%B; if(bl===0)msg='已記一根 · 這盒抽完了，還有 '+(N/B)+' 盒';else msg='已記一根 · 這盒還剩 '+bl+' 根';}
+    toast(msg,2800);
+  }else{ toast('已記一根 ✓'); }
+}
 function doSmoke(){
   if(!selP){toast('先選菸品');return;}
   if(isRollSel()&&!selPouch){toast('先選或開一包菸草包');return;}
@@ -543,7 +553,8 @@ function doSmoke(){
   $('saveBtn').disabled=true;
   var pp=selPeople.slice(), pl=selPlace||'';
   google.script.run.withSuccessHandler(function(st){
-    toast('已記一根 ✓');selPeople=[];selPlace=null;renderPeopleChips();renderPlaceChips();applyState(st);
+    selPeople=[];selPlace=null;renderPeopleChips();renderPlaceChips();applyState(st);
+    smokeBubble_();
     if(st&&st.wish){openWishSheet({id:st.wish.id,month:st.wish.month,tag:st.wish.tag,editing:false,sub:wishSub_(st.wish)},'');}
   }).withFailureHandler(function(e){$('saveBtn').disabled=false;err(e);})
     .addSmoke({productId:selP,reason:selR,pouchId:isRollSel()?selPouch:'',people:pp,place:pl});
