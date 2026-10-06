@@ -363,7 +363,9 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
   <div class="sheet">
     <div class="grip"></div>
     <div class="sheet-title" id="wishTitle">🌠 許願菸</div>
-    <div id="wishSub" style="text-align:center;color:var(--muted);font-size:13px;margin:-6px 0 12px"></div>
+    <div id="wishIdLine" class="hide num" style="text-align:center;font-weight:800;font-size:22px;color:var(--accent);margin:2px 0 0"></div>
+    <div id="wishIdHint" class="hide" style="text-align:center;font-size:11px;color:var(--muted);margin:1px 0 8px">把這個編號抄到菸彈上</div>
+    <div id="wishSub" style="text-align:center;color:var(--muted);font-size:13px;margin:-2px 0 12px"></div>
     <textarea id="wishText" placeholder="許個願吧…" style="width:100%;box-sizing:border-box;border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:12px;font-size:16px;font-family:inherit;min-height:96px;outline:none;resize:none"></textarea>
     <button class="sheet-btn primary" onclick="saveWishFromSheet()">存願望</button>
     <button class="sheet-btn del hide" id="wishDelBtn" onclick="delWishFromSheet()">刪除願望</button>
@@ -555,7 +557,7 @@ function doSmoke(){
   google.script.run.withSuccessHandler(function(st){
     selPeople=[];selPlace=null;renderPeopleChips();renderPlaceChips();applyState(st);
     smokeBubble_();
-    if(st&&st.wish){openWishSheet({id:st.wish.id,month:st.wish.month,tag:st.wish.tag,editing:false,sub:wishSub_(st.wish)},'');}
+    if(st&&st.wish){openWishSheet({id:st.wish.id,month:st.wish.month,tag:st.wish.tag,wishId:st.wish.wishId,editing:false,sub:wishSub_(st.wish)},'');}
   }).withFailureHandler(function(e){$('saveBtn').disabled=false;err(e);})
     .addSmoke({productId:selP,reason:selR,pouchId:isRollSel()?selPouch:'',people:pp,place:pl});
 }
@@ -1067,6 +1069,10 @@ function wishSub_(w){return (w.tag==='最後一根'?'這盒最後一根':'這盒
 function openWishSheet(ctx,existing){
   wishCtx=ctx;
   $('wishTitle').textContent=ctx.editing?'編輯願望':'🌠 許願菸';
+  var hasId=!!ctx.wishId;
+  $('wishIdLine').textContent=ctx.wishId||'';
+  $('wishIdLine').classList.toggle('hide',!hasId);
+  $('wishIdHint').classList.toggle('hide',!hasId);
   $('wishSub').textContent=ctx.sub||'';
   $('wishText').value=existing||'';
   $('wishDelBtn').classList.toggle('hide',!ctx.editing);
@@ -1099,7 +1105,7 @@ function renderWishes(){
   var q=($('wishSearch').value||'').trim().toLowerCase();
   var list=WISHES.filter(function(w){
     if(!q)return true;
-    var hay=(w.wish+' '+w.productName+' '+w.reason+' '+w.place+' '+(w.people||[]).join(' ')+' '+w.wishTag).toLowerCase();
+    var hay=(w.wish+' '+w.productName+' '+w.reason+' '+w.place+' '+(w.people||[]).join(' ')+' '+w.wishTag+' '+(w.wishId||'')).toLowerCase();
     return hay.indexOf(q)>=0;
   });
   if(!list.length){el.innerHTML='<div class="card"><div class="empty">沒有符合「'+esc(q)+'」的願望</div></div>';return;}
@@ -1107,6 +1113,7 @@ function renderWishes(){
     var meta=[w.productName,catTag(w.cat),w.wishTag].filter(Boolean).join(' · ');
     var extra=[w.reason,(w.people&&w.people.length?'跟 '+w.people.join('、'):''),w.place].filter(Boolean).join(' · ');
     return '<div class="card" style="padding:14px;margin-bottom:10px;cursor:pointer" onclick="editWish(\''+w.id+'\',\''+w.month+'\')">'+
+      (w.wishId?'<div class="num" style="font-weight:800;font-size:16px;color:var(--accent);margin-bottom:6px">'+esc(w.wishId)+'</div>':'')+
       '<div style="font-size:15px;font-weight:500;line-height:1.55;white-space:pre-wrap">'+esc(w.wish)+'</div>'+
       '<div class="t2" style="margin-top:8px">🌠 '+esc(meta)+'</div>'+
       '<div class="t2">'+w.timeStr+(extra?' · '+esc(extra):'')+'</div></div>';
@@ -1115,7 +1122,7 @@ function renderWishes(){
 function editWish(id,month){
   var w=null;for(var i=0;i<WISHES.length;i++)if(WISHES[i].id===id&&WISHES[i].month===month){w=WISHES[i];break;}
   if(!w)return;
-  openWishSheet({id:id,month:month,tag:w.wishTag,editing:true,sub:w.productName+' · '+w.wishTag},w.wish);
+  openWishSheet({id:id,month:month,tag:w.wishTag,wishId:w.wishId,editing:true,sub:w.productName+' · '+w.wishTag},w.wish);
 }
 
 /* ---- tabs / sheets ---- */

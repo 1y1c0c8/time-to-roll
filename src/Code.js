@@ -320,12 +320,12 @@ function addSmoke(payload) {
   consumeInventory_(cat, row[R_PID - 1], pouchId);
 
   var st = state_(tab);
-  st.wish = wishTrigger_(prod, id, tab);   // 許願菸：命中回傳 {id,month,tag,...}，否則 null
+  st.wish = wishTrigger_(prod, id, tab, now);   // 許願菸：命中回傳 {id,month,tag,...}，否則 null
   return st;
 }
 
 // 加熱菸抽到一盒的一半/最後一根、盒菸抽到最後一根 → 觸發許願菸
-function wishTrigger_(prod, id, tab) {
+function wishTrigger_(prod, id, tab, now) {
   if (!prod || !isStick(prod.cat) || !(prod.left > 0)) return null;
   var B = prod.perBox || readSettings().perBox || 20;
   if (B <= 0) return null;
@@ -340,7 +340,13 @@ function wishTrigger_(prod, id, tab) {
     if (pos === B) tag = '最後一根';
   }
   if (!tag) return null;
-  return { id: id, month: tab, tag: tag, productName: prod.name, cat: prod.cat };
+  return { id: id, month: tab, tag: tag, productName: prod.name, cat: prod.cat, wishId: wishId_(now, prod.cat, tag) };
+}
+
+// 許願加熱菸彈編號：#YYMMDD ①(第10根/一半) 或 ②(最後一根)。只有加熱菸有，其他回空字串
+function wishId_(d, cat, tag) {
+  if (cat !== '加熱菸') return '';
+  return '#' + Utilities.formatDate(d, TZ, 'yyMMdd') + ' ' + (tag === '最後一根' ? '②' : '①');
 }
 
 function updateSmoke(payload) {
@@ -429,6 +435,7 @@ function getWishes() {
         timeStr: Utilities.formatDate(d, TZ, 'yyyy/MM/dd HH:mm'),
         wish: wish,
         wishTag: String(row[R_WISHTAG - 1] || ''),
+        wishId: wishId_(d, String(row[R_CAT - 1] || ''), String(row[R_WISHTAG - 1] || '')),
         productName: String(row[R_PNAME - 1] || ''),
         cat: String(row[R_CAT - 1] || ''),
         reason: String(row[R_REASON - 1] || ''),
