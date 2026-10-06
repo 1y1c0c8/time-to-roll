@@ -31,8 +31,8 @@ var STICK_CATS = ['加熱菸', '盒菸'];   // 支為單位、可自動連動扣
 function isStick(cat) { return STICK_CATS.indexOf(cat) >= 0; }
 
 // 紀錄 columns (1-based, fixed) — one sheet per month, named yyyy-MM
-var R_ID = 1, R_TIME = 2, R_REASON = 3, R_PID = 4, R_PNAME = 5, R_CAT = 6, R_POUCH = 7, R_COST = 8, R_NOTE = 9, R_PEOPLE = 10, R_PLACE = 11;
-var RECORD_HEADERS = ['id', '時間', '原因', '菸品id', '菸品名稱', '類別', '菸草包id', '成本', '備註', '人物', '地點'];
+var R_ID = 1, R_TIME = 2, R_REASON = 3, R_PID = 4, R_PNAME = 5, R_CAT = 6, R_POUCH = 7, R_COST = 8, R_NOTE = 9, R_PEOPLE = 10, R_PLACE = 11, R_WISH = 12, R_WISHTAG = 13;
+var RECORD_HEADERS = ['id', '時間', '原因', '菸品id', '菸品名稱', '類別', '菸草包id', '成本', '備註', '人物', '地點', '願望', '許願標記'];
 var PEOPLE_SEP = '、';   // 多個人名以此連接存一格
 
 // 原因 columns (1-based, fixed)
@@ -169,6 +169,10 @@ function migrate_() {
       s.getRange(1, R_PEOPLE).setValue('人物').setFontWeight('bold').setBackground('#e3efed');
     if (String(s.getRange(1, R_PLACE).getValue()).trim() !== '地點')
       s.getRange(1, R_PLACE).setValue('地點').setFontWeight('bold').setBackground('#e3efed');
+    if (String(s.getRange(1, R_WISH).getValue()).trim() !== '願望')
+      s.getRange(1, R_WISH).setValue('願望').setFontWeight('bold').setBackground('#e3efed');
+    if (String(s.getRange(1, R_WISHTAG).getValue()).trim() !== '許願標記')
+      s.getRange(1, R_WISHTAG).setValue('許願標記').setFontWeight('bold').setBackground('#e3efed');
   });
 }
 
@@ -273,6 +277,8 @@ function getMonthRecords(tab) {
       pouchId: String(row[R_POUCH - 1] || ''),
       people: String(row[R_PEOPLE - 1] || '').split(PEOPLE_SEP).filter(Boolean),
       place: String(row[R_PLACE - 1] || ''),
+      wish: String(row[R_WISH - 1] || ''),
+      wishTag: String(row[R_WISHTAG - 1] || ''),
       month: tab
     });
   });
@@ -312,7 +318,29 @@ function addSmoke(payload) {
   row[R_PLACE - 1] = String(payload.place || '');
   s.appendRow(row);
   consumeInventory_(cat, row[R_PID - 1], pouchId);
-  return state_(tab);
+
+  var st = state_(tab);
+  st.wish = wishTrigger_(prod, id, tab);   // 許願菸：命中回傳 {id,month,tag,...}，否則 null
+  return st;
+}
+
+// 加熱菸抽到一盒的一半/最後一根、盒菸抽到最後一根 → 觸發許願菸
+function wishTrigger_(prod, id, tab) {
+  if (!prod || !isStick(prod.cat) || !(prod.left > 0)) return null;
+  var B = prod.perBox || readSettings().perBox || 20;
+  if (B <= 0) return null;
+  var after = prod.left - 1;              // 扣這根之後的剩餘
+  var pos = B - (after % B);              // 這根是這盒的第幾根（1..B）
+  var half = Math.round(B / 2);
+  var tag = null;
+  if (prod.cat === '加熱菸') {
+    if (pos === B) tag = '最後一根';
+    else if (pos === half) tag = '第' + half + '根';
+  } else if (prod.cat === '盒菸') {
+    if (pos === B) tag = '最後一根';
+  }
+  if (!tag) return null;
+  return { id: id, month: tab, tag: tag, productName: prod.name, cat: prod.cat };
 }
 
 function updateSmoke(payload) {
@@ -377,6 +405,57 @@ function findRecordRow_(tab, id) {
 function readRecordRow_(sheet, row) {
   var v = sheet.getRange(row, R_PID, 1, 4).getValues()[0]; // R_PID..R_POUCH
   return { pid: String(v[0] || ''), cat: String(v[2] || ''), pouchId: String(v[3] || '') };
+}
+
+/* ------------------------------------------------------------------ 許願菸 */
+
+function getWishes() {
+  ensureReady_();
+  var out = [];
+  ss().getSheets().forEach(function (sheet) {
+    var nm = sheet.getName();
+    if (!/^\d{4}-\d{2}$/.test(nm)) return;
+    var last = sheet.getLastRow();
+    if (last < 2) return;
+    var v = sheet.getRange(2, 1, last - 1, RECORD_HEADERS.length).getValues();
+    v.forEach(function (row) {
+      var wish = String(row[R_WISH - 1] || '').trim();
+      if (!wish) return;
+      var t = row[R_TIME - 1];
+      var d = (t instanceof Date) ? t : new Date(t);
+      out.push({
+        id: String(row[R_ID - 1]),
+        time: d.getTime(),
+        timeStr: Utilities.formatDate(d, TZ, 'yyyy/MM/dd HH:mm'),
+        wish: wish,
+        wishTag: String(row[R_WISHTAG - 1] || ''),
+        productName: String(row[R_PNAME - 1] || ''),
+        cat: String(row[R_CAT - 1] || ''),
+        reason: String(row[R_REASON - 1] || ''),
+        people: String(row[R_PEOPLE - 1] || '').split(PEOPLE_SEP).filter(Boolean),
+        place: String(row[R_PLACE - 1] || ''),
+        month: nm
+      });
+    });
+  });
+  out.sort(function (a, b) { return b.time - a.time; });
+  return out;
+}
+
+function saveWish(payload) {
+  var loc = findRecordRow_(payload.month, payload.id);
+  if (!loc) throw new Error('找不到這筆紀錄');
+  loc.sheet.getRange(loc.row, R_WISH).setValue(String(payload.wish || ''));
+  if (payload.tag != null) loc.sheet.getRange(loc.row, R_WISHTAG).setValue(String(payload.tag));
+  return true;
+}
+
+function deleteWish(payload) {
+  var loc = findRecordRow_(payload.month, payload.id);
+  if (!loc) throw new Error('找不到這筆紀錄');
+  loc.sheet.getRange(loc.row, R_WISH).setValue('');
+  loc.sheet.getRange(loc.row, R_WISHTAG).setValue('');
+  return true;
 }
 
 /* ------------------------------------------------------------------ 庫存連動 */

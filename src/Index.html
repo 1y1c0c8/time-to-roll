@@ -142,6 +142,7 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
   <button data-v="log" class="active" onclick="showTab('log')"><i class="ti ti-plus"></i>記錄</button>
   <button data-v="stat" onclick="showTab('stat')"><i class="ti ti-chart-bar"></i>統計</button>
   <button data-v="inv" onclick="showTab('inv')"><i class="ti ti-box"></i>庫存</button>
+  <button data-v="wish" onclick="showTab('wish')"><i class="ti ti-star"></i>許願</button>
   <button data-v="set" onclick="showTab('set')"><i class="ti ti-settings"></i>設定</button>
 </div>
 
@@ -209,6 +210,17 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
 <!-- ===== 庫存 ===== -->
 <section id="viewinv" class="hide">
   <div class="wrap" id="invWrap"></div>
+</section>
+
+<!-- ===== 許願 ===== -->
+<section id="viewwish" class="hide">
+  <div class="wrap">
+    <div class="card field" style="border-top:0;border-radius:var(--r);margin-bottom:12px;padding-left:14px;padding-right:14px">
+      <label><i class="ti ti-search"></i></label>
+      <input id="wishSearch" placeholder="搜尋願望關鍵字" oninput="renderWishes()" style="text-align:left">
+    </div>
+    <div id="wishList"></div>
+  </div>
 </section>
 
 <!-- ===== 設定 ===== -->
@@ -346,6 +358,19 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
   </div>
 </div>
 
+<!-- 許願菸 -->
+<div class="overlay" id="wishSheet" onclick="if(event.target===this)closeSheets()">
+  <div class="sheet">
+    <div class="grip"></div>
+    <div class="sheet-title" id="wishTitle">🌠 許願菸</div>
+    <div id="wishSub" style="text-align:center;color:var(--muted);font-size:13px;margin:-6px 0 12px"></div>
+    <textarea id="wishText" placeholder="許個願吧…" style="width:100%;box-sizing:border-box;border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:12px;font-size:16px;font-family:inherit;min-height:96px;outline:none;resize:none"></textarea>
+    <button class="sheet-btn primary" onclick="saveWishFromSheet()">存願望</button>
+    <button class="sheet-btn del hide" id="wishDelBtn" onclick="delWishFromSheet()">刪除願望</button>
+    <button class="sheet-btn cancel" id="wishCancel" onclick="closeSheets()">之後再說</button>
+  </div>
+</div>
+
 <div class="save">
   <button id="saveBtn" onclick="doSmoke()" disabled>記一根</button>
 </div>
@@ -377,7 +402,6 @@ function show(id,on){$(id).classList.toggle('hide',!on);}
 function findP(id){for(var i=0;i<S.products.length;i++)if(S.products[i].id===id)return S.products[i];return null;}
 function usingOf(pid){return ((S.pouches&&S.pouches.using)||[]).filter(function(g){return g.productId===pid;});}
 function isRollSel(){var p=findP(selP);return !!(p&&p.cat==='捲菸');}
-// 收到後端整包狀態就全刷新
 function applyState(st){
   if(!st)return;
   if(st.records)S.records=st.records;
@@ -507,7 +531,7 @@ function renderTodayList(){
     if(r.place)parts.push('@ '+r.place);
     var sub=parts.filter(Boolean).join(' · ');
     return '<div class="row tap" onclick="openEdit(\''+r.id+'\')">'+
-      '<div class="mid"><div class="t1">'+esc(r.reason||'（無原因）')+'</div>'+(sub?'<div class="t2">'+esc(sub)+'</div>':'')+'</div>'+
+      '<div class="mid"><div class="t1">'+(r.wish?'🌠 ':'')+esc(r.reason||'（無原因）')+'</div>'+(sub?'<div class="t2">'+esc(sub)+'</div>':'')+'</div>'+
       '<div class="rt num">'+r.timeStr+'</div></div>';
   }).join('');
 }
@@ -517,9 +541,12 @@ function doSmoke(){
   if(isRollSel()&&!selPouch){toast('先選或開一包菸草包');return;}
   if(!selR){toast('先選原因');return;}
   $('saveBtn').disabled=true;
-  google.script.run.withSuccessHandler(function(st){toast('已記一根 ✓');selPeople=[];selPlace=null;renderPeopleChips();renderPlaceChips();applyState(st);})
-    .withFailureHandler(function(e){$('saveBtn').disabled=false;err(e);})
-    .addSmoke({productId:selP,reason:selR,pouchId:isRollSel()?selPouch:'',people:selPeople.slice(),place:selPlace||''});
+  var pp=selPeople.slice(), pl=selPlace||'';
+  google.script.run.withSuccessHandler(function(st){
+    toast('已記一根 ✓');selPeople=[];selPlace=null;renderPeopleChips();renderPlaceChips();applyState(st);
+    if(st&&st.wish){openWishSheet({id:st.wish.id,month:st.wish.month,tag:st.wish.tag,editing:false,sub:wishSub_(st.wish)},'');}
+  }).withFailureHandler(function(e){$('saveBtn').disabled=false;err(e);})
+    .addSmoke({productId:selP,reason:selR,pouchId:isRollSel()?selPouch:'',people:pp,place:pl});
 }
 
 /* ---- edit a record ---- */
@@ -1023,12 +1050,70 @@ function renderHourDist(g){
   }).join('');
 }
 
+/* ---- 許願菸 ---- */
+var WISHES=[], wishCtx=null;
+function wishSub_(w){return (w.tag==='最後一根'?'這盒最後一根':'這盒'+w.tag)+' · '+w.productName;}
+function openWishSheet(ctx,existing){
+  wishCtx=ctx;
+  $('wishTitle').textContent=ctx.editing?'編輯願望':'🌠 許願菸';
+  $('wishSub').textContent=ctx.sub||'';
+  $('wishText').value=existing||'';
+  $('wishDelBtn').classList.toggle('hide',!ctx.editing);
+  $('wishCancel').textContent=ctx.editing?'取消':'之後再說';
+  $('wishSheet').classList.add('show');
+  setTimeout(function(){try{$('wishText').focus();}catch(e){}},200);
+}
+function saveWishFromSheet(){
+  var txt=$('wishText').value.trim();
+  if(!txt){toast('願望是空的');return;}
+  google.script.run.withSuccessHandler(function(){
+    closeSheets();toast('願望已記下 🌠');refreshRecords();
+    if(wishCtx&&wishCtx.editing)loadWishes();
+  }).withFailureHandler(err).saveWish({id:wishCtx.id,month:wishCtx.month,wish:txt,tag:wishCtx.tag});
+}
+function delWishFromSheet(){
+  if(!confirm('刪除這個願望？'))return;
+  google.script.run.withSuccessHandler(function(){closeSheets();toast('已刪除');refreshRecords();loadWishes();})
+    .withFailureHandler(err).deleteWish({id:wishCtx.id,month:wishCtx.month});
+}
+function refreshRecords(){
+  google.script.run.withSuccessHandler(function(recs){S.records=recs;renderHero();renderTodayList();}).withFailureHandler(err).getMonthRecords(S.thisMonth);
+}
+function loadWishes(){
+  google.script.run.withSuccessHandler(function(ws){WISHES=ws;renderWishes();}).withFailureHandler(err).getWishes();
+}
+function renderWishes(){
+  var el=$('wishList');if(!el)return;
+  if(!WISHES.length){el.innerHTML='<div class="card"><div class="empty">還沒有許願菸。<br>抽到加熱菸一盒的一半／最後一根、或盒菸最後一根時，會跳出 🌠 讓你許願。</div></div>';return;}
+  var q=($('wishSearch').value||'').trim().toLowerCase();
+  var list=WISHES.filter(function(w){
+    if(!q)return true;
+    var hay=(w.wish+' '+w.productName+' '+w.reason+' '+w.place+' '+(w.people||[]).join(' ')+' '+w.wishTag).toLowerCase();
+    return hay.indexOf(q)>=0;
+  });
+  if(!list.length){el.innerHTML='<div class="card"><div class="empty">沒有符合「'+esc(q)+'」的願望</div></div>';return;}
+  el.innerHTML=list.map(function(w){
+    var meta=[w.productName,catTag(w.cat),w.wishTag].filter(Boolean).join(' · ');
+    var extra=[w.reason,(w.people&&w.people.length?'跟 '+w.people.join('、'):''),w.place].filter(Boolean).join(' · ');
+    return '<div class="card" style="padding:14px;margin-bottom:10px;cursor:pointer" onclick="editWish(\''+w.id+'\',\''+w.month+'\')">'+
+      '<div style="font-size:15px;font-weight:500;line-height:1.55;white-space:pre-wrap">'+esc(w.wish)+'</div>'+
+      '<div class="t2" style="margin-top:8px">🌠 '+esc(meta)+'</div>'+
+      '<div class="t2">'+w.timeStr+(extra?' · '+esc(extra):'')+'</div></div>';
+  }).join('');
+}
+function editWish(id,month){
+  var w=null;for(var i=0;i<WISHES.length;i++)if(WISHES[i].id===id&&WISHES[i].month===month){w=WISHES[i];break;}
+  if(!w)return;
+  openWishSheet({id:id,month:month,tag:w.wishTag,editing:true,sub:w.productName+' · '+w.wishTag},w.wish);
+}
+
 /* ---- tabs / sheets ---- */
 function showTab(v){
-  ['log','stat','inv','set'].forEach(function(k){$('view'+k).classList.toggle('hide',k!==v);});
+  ['log','stat','inv','set','wish'].forEach(function(k){$('view'+k).classList.toggle('hide',k!==v);});
   document.querySelectorAll('.tabbar button').forEach(function(b){b.classList.toggle('active',b.dataset.v===v);});
   $('saveBtn').parentElement.classList.toggle('hide',v!=='log');
   if(v==='stat')setGran(statGran);
+  if(v==='wish')loadWishes();
 }
 function closeSheets(){document.querySelectorAll('.overlay').forEach(function(o){o.classList.remove('show');});}
 </script>
