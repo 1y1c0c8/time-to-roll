@@ -939,19 +939,32 @@ function getStats(gran, key) {
   var excluded = {};   // 標記為「不計入統計」的原因
   getReasons().forEach(function (r) { if (!r.stats) excluded[r.name] = 1; });
 
+  buckets.forEach(function (b) { b.cat = { '加熱菸': 0, '盒菸': 0, '捲菸': 0, '其他': 0 }; });
+
   var recs = readRecordsBetween_(start, end);
   var reason = {}, hours = [0, 0, 0, 0], places = {}, noPlace = 0, total = 0;
   recs.forEach(function (r) {
     if (excluded[r.reason]) return;   // 這類紀錄完全不進統計
     var d = new Date(r.time);
     var bi = bucketOf(d);
-    if (bi >= 0 && bi < buckets.length) buckets[bi].count++;
+    if (bi >= 0 && bi < buckets.length) {
+      buckets[bi].count++;
+      var cc = (r.cat === '加熱菸' || r.cat === '盒菸' || r.cat === '捲菸') ? r.cat : '其他';
+      buckets[bi].cat[cc]++;
+    }
     total++;
     var rn = r.reason || '（無原因）';
     reason[rn] = (reason[rn] || 0) + 1;
     hours[hourGroup_(d)]++;
     if (r.place) places[r.place] = (places[r.place] || 0) + 1; else noPlace++;
   });
+
+  var catSeries = [];
+  ['加熱菸', '盒菸', '捲菸'].forEach(function (c) {
+    catSeries.push({ cat: c, data: buckets.map(function (b) { return b.cat[c]; }) });
+  });
+  var otherData = buckets.map(function (b) { return b.cat['其他']; });
+  if (otherData.some(function (x) { return x > 0; })) catSeries.push({ cat: '其他', data: otherData });
 
   var coordMap = {};
   getPlaces().forEach(function (pl) { coordMap[pl.name] = { lat: pl.lat, lng: pl.lng }; });
@@ -968,6 +981,7 @@ function getStats(gran, key) {
     gran: gran, key: key, rangeLabel: rangeLabel,
     labels: buckets.map(function (b) { return b.label; }),
     counts: buckets.map(function (b) { return b.count; }),
+    catSeries: catSeries,
     ma: movingAvg_(buckets.map(function (b) { return b.count; }), maWin),
     maWindow: maWin,
     reasons: reasons,
