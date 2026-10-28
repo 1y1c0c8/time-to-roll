@@ -48,6 +48,11 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
 .hero .last{font-size:12px;color:var(--muted);margin-top:6px}
 
 .sect-title{font-size:12px;color:var(--muted);font-weight:700;margin:16px 4px 8px}
+.dayNav{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:16px 4px 8px}
+.dayNav .dayTitle{font-size:12px;color:var(--muted);font-weight:700}
+.dayNav .dayBtn{border:0;background:transparent;color:var(--accent);width:34px;height:28px;border-radius:9px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px}
+.dayNav .dayBtn:active{background:var(--accent-soft)}
+.dayNav .dayBtn:disabled{color:var(--line);cursor:default;background:transparent}
 .sec-h{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--muted);font-weight:700;margin:16px 4px 8px;cursor:pointer}
 .sec-h i{transition:transform .2s}
 .sec-h.collapsed i{transform:rotate(-90deg)}
@@ -170,7 +175,11 @@ header{position:sticky;top:0;z-index:20;background:rgba(244,243,239,.86);
       <div id="placeChips" class="chips"></div>
     </div>
 
-    <div class="sect-title">今天的紀錄</div>
+    <div class="dayNav">
+      <button class="dayBtn" onclick="stepDay(-1)" aria-label="前一天"><i class="ti ti-chevron-left"></i></button>
+      <div class="dayTitle" id="dayLbl">今天的紀錄</div>
+      <button class="dayBtn" id="dayNext" onclick="stepDay(1)" aria-label="後一天"><i class="ti ti-chevron-right"></i></button>
+    </div>
     <div id="todayList" class="card"></div>
   </div>
 </section>
@@ -392,6 +401,7 @@ function catTag(c){return c==='加熱菸'?'加熱':c==='盒菸'?'盒菸':c==='�
 
 var S={settings:{cur:'NT$',mapStyle:'voyager'},reasons:[],people:[],places:[],products:[],pouches:{using:[],done:[]},records:[],thisMonth:''};
 var selP=null, selR=null, selPouch=null, selPeople=[], selPlace=null, editing=null, prodEditId=null;
+var selDay=null, recCache={};
 var placeEditName=null, placeTmp={name:'',lat:null,lng:null}, pickMap=null, pickMarker=null;
 var BASEMAPS={
   voyager:{url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',sub:'abcd'},
@@ -407,7 +417,7 @@ function usingOf(pid){return ((S.pouches&&S.pouches.using)||[]).filter(function(
 function isRollSel(){var p=findP(selP);return !!(p&&p.cat==='捲菸');}
 function applyState(st){
   if(!st)return;
-  if(st.records)S.records=st.records;
+  if(st.records){S.records=st.records;recCache={};}
   if(st.products)S.products=st.products;
   if(st.pouches)S.pouches=st.pouches;
   if(selP&&!findP(selP))selP=(S.products[0]?S.products[0].id:null);
@@ -433,6 +443,37 @@ function renderHero(){
   $('todayN').textContent=tr.length;
   var last=S.records[0];
   $('lastAgo').textContent=last?('上一根 · '+ago(last.time)):'今天還沒記';
+}
+
+function monthTabOf(dayStr){return dayStr.slice(0,7);}
+function recsOfMonth(tab,cb){
+  if(tab===S.thisMonth){cb(S.records);return;}
+  if(recCache[tab]){cb(recCache[tab]);return;}
+  google.script.run.withSuccessHandler(function(recs){recCache[tab]=recs;cb(recs);}).withFailureHandler(err).getMonthRecords(tab);
+}
+function recordsForDay(dayStr,cb){
+  recsOfMonth(monthTabOf(dayStr),function(recs){cb(recs.filter(function(r){return r.dateStr===dayStr;}));});
+}
+function findRec(id){
+  for(var i=0;i<S.records.length;i++)if(S.records[i].id===id)return S.records[i];
+  for(var k in recCache){if(!recCache.hasOwnProperty(k))continue;var a=recCache[k];for(var j=0;j<a.length;j++)if(a[j].id===id)return a[j];}
+  return null;
+}
+function dayLabel(dayStr){
+  var today=localDateStr(new Date());
+  var y=new Date();y.setDate(y.getDate()-1);
+  if(dayStr===today)return '今天的紀錄';
+  if(dayStr===localDateStr(y))return '昨天的紀錄';
+  var p=dayStr.split('-');var w=['日','一','二','三','四','五','六'][new Date(+p[0],+p[1]-1,+p[2],12,0,0).getDay()];
+  return (+p[1])+'/'+(+p[2])+'（週'+w+'）的紀錄';
+}
+function stepDay(delta){
+  if(!selDay)selDay=localDateStr(new Date());
+  var p=selDay.split('-');var d=new Date(+p[0],+p[1]-1,+p[2],12,0,0);
+  d.setDate(d.getDate()+delta);
+  var ns=localDateStr(d);
+  if(ns>localDateStr(new Date()))return;
+  selDay=ns;renderTodayList();
 }
 
 function renderProdChips(){
@@ -526,17 +567,22 @@ function quickAddPlace(){
 }
 
 function renderTodayList(){
-  var tr=todayRecords();var el=$('todayList');
-  if(!tr.length){el.innerHTML='<div class="empty">今天還沒有紀錄</div>';return;}
-  el.innerHTML=tr.map(function(r){
-    var parts=[r.productName,catTag(r.cat)];
-    if(r.people&&r.people.length)parts.push('跟 '+r.people.join('、'));
-    if(r.place)parts.push('@ '+r.place);
-    var sub=parts.filter(Boolean).join(' · ');
-    return '<div class="row tap" onclick="openEdit(\''+r.id+'\')">'+
-      '<div class="mid"><div class="t1">'+(r.wish?'🌠 ':'')+esc(r.reason||'（無原因）')+'</div>'+(sub?'<div class="t2">'+esc(sub)+'</div>':'')+'</div>'+
-      '<div class="rt num">'+r.timeStr+'</div></div>';
-  }).join('');
+  if(!selDay)selDay=localDateStr(new Date());
+  var el=$('todayList');var today=localDateStr(new Date());
+  $('dayLbl').textContent=dayLabel(selDay);
+  $('dayNext').disabled=(selDay>=today);
+  recordsForDay(selDay,function(tr){
+    if(!tr.length){el.innerHTML='<div class="empty">'+(selDay===today?'今天還沒有紀錄':'這天沒有紀錄')+'</div>';return;}
+    el.innerHTML=tr.map(function(r){
+      var parts=[r.productName,catTag(r.cat)];
+      if(r.people&&r.people.length)parts.push('跟 '+r.people.join('、'));
+      if(r.place)parts.push('@ '+r.place);
+      var sub=parts.filter(Boolean).join(' · ');
+      return '<div class="row tap" onclick="openEdit(\''+r.id+'\')">'+
+        '<div class="mid"><div class="t1">'+(r.wish?'🌠 ':'')+esc(r.reason||'（無原因）')+'</div>'+(sub?'<div class="t2">'+esc(sub)+'</div>':'')+'</div>'+
+        '<div class="rt num">'+r.timeStr+'</div></div>';
+    }).join('');
+  });
 }
 
 function smokeBubble_(){
@@ -555,7 +601,7 @@ function doSmoke(){
   $('saveBtn').disabled=true;
   var pp=selPeople.slice(), pl=selPlace||'';
   google.script.run.withSuccessHandler(function(st){
-    selPeople=[];selPlace=null;renderPeopleChips();renderPlaceChips();applyState(st);
+    selPeople=[];selPlace=null;selDay=localDateStr(new Date());renderPeopleChips();renderPlaceChips();applyState(st);
     smokeBubble_();
     if(st&&st.wish){openWishSheet({id:st.wish.id,month:st.wish.month,tag:st.wish.tag,wishId:st.wish.wishId,editing:false,sub:wishSub_(st.wish)},'');}
   }).withFailureHandler(function(e){$('saveBtn').disabled=false;err(e);})
@@ -564,7 +610,7 @@ function doSmoke(){
 
 /* ---- edit a record ---- */
 function openEdit(id){
-  var r=null;for(var i=0;i<S.records.length;i++)if(S.records[i].id===id){r=S.records[i];break;}
+  var r=findRec(id);
   if(!r)return;editing={id:r.id,month:r.month,productId:r.productId,reason:r.reason,pouchId:r.pouchId||'',people:(r.people||[]).slice(),place:r.place||''};
   editing._origTime=toLocalInput(r.time);$('editTime').value=editing._origTime;
   renderEditChips();$('editSheet').classList.add('show');
@@ -1102,7 +1148,7 @@ function delWishFromSheet(){
     .withFailureHandler(err).deleteWish({id:wishCtx.id,month:wishCtx.month});
 }
 function refreshRecords(){
-  google.script.run.withSuccessHandler(function(recs){S.records=recs;renderHero();renderTodayList();}).withFailureHandler(err).getMonthRecords(S.thisMonth);
+  google.script.run.withSuccessHandler(function(recs){S.records=recs;recCache={};renderHero();renderTodayList();}).withFailureHandler(err).getMonthRecords(S.thisMonth);
 }
 function loadWishes(){
   google.script.run.withSuccessHandler(function(ws){WISHES=ws;renderWishes();}).withFailureHandler(err).getWishes();
