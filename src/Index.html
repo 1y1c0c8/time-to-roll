@@ -68,6 +68,20 @@ header{padding:max(14px,env(safe-area-inset-top)) 18px 6px;
 .segMini button{border:0;background:transparent;color:var(--muted);font-weight:700;font-size:12px;padding:5px 13px;border-radius:999px;cursor:pointer;font-family:inherit}
 .segMini button.on{background:var(--accent-soft);color:var(--accent)}
 .grpLabel{flex-basis:100%;font-size:11px;color:var(--muted);font-weight:700;margin:8px 2px 0}
+.tree{display:block}
+.treeAdd{margin-bottom:8px}
+.lvl{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;border-radius:12px;padding:11px 13px;margin-top:6px;background:var(--card);border:1px solid var(--line)}
+.lvl:active{background:var(--accent-soft)}
+.lvl.l0{font-weight:700;font-size:14px}
+.lvl.l1{margin-left:16px;font-size:13px;font-weight:600;background:var(--accent-soft);border-color:transparent;padding:9px 12px}
+.lvl .lvlName{display:flex;align-items:center;gap:7px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lvl .cnt{font-size:11px;color:var(--muted);font-weight:600}
+.lvl.l1 .cnt{color:var(--accent)}
+.lvl .lvlR{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.lvl .distTag{font-size:11px;color:var(--accent);font-weight:700}
+.lvl .chev{color:var(--muted);transition:transform .2s;font-size:16px;transform:rotate(-90deg)}
+.lvl.open .chev{transform:rotate(0)}
+.lvlChips{margin:6px 0 2px 16px}
 
 .row{display:flex;align-items:center;gap:12px;padding:13px 16px;border-top:1px solid var(--line)}
 .row:first-child{border-top:0}
@@ -558,12 +572,13 @@ function quickAddPerson(){
 }
 
 var placeMode='trail', myPos=null, posTried=false, regionBusy=false;
+var expCity=null, expDist=null, treeInit=false;
 var addPlaceChip='<button class="chip add" onclick="quickAddPlace()"><i class="ti ti-plus"></i> 新增地點</button>';
 
 function setPlaceMode(m){
   if(placeMode===m)return;
   placeMode=m;
-  if(m==='nearby')S.places.forEach(function(p){p._rgFail=false;});
+  if(m==='nearby'){treeInit=false;S.places.forEach(function(p){p._rgFail=false;});}
   var seg=$('placeModeSeg');if(seg)seg.querySelectorAll('button').forEach(function(b){b.classList.toggle('on',b.dataset.m===m);});
   renderPlaceChips();
 }
@@ -584,10 +599,12 @@ function placesByCreation(){return S.places.slice().sort(function(a,b){return (a
 function renderPlaceChips(){
   var el=$('placeChips');if(!el)return;
   if(placeMode!=='nearby'){
+    el.className='chips';
     el.innerHTML=placesByCreation().map(function(p){return placeChip(p,false);}).join('')+addPlaceChip;
     return;
   }
   if(!myPos){
+    el.className='chips';
     if(!posTried){
       posTried=true;
       el.innerHTML=addPlaceChip+'<div class="grpLabel">抓取目前位置中…</div>';
@@ -597,29 +614,75 @@ function renderPlaceChips(){
     }
     return;
   }
-  var withC=[],noC=[];
-  S.places.forEach(function(p){if(p.lat!=null){p._d=haversine(myPos.lat,myPos.lng,p.lat,p.lng);withC.push(p);}else{noC.push(p);}});
-  var groups={},order=[];
-  withC.forEach(function(p){
-    var city=p.city||'待分區',dist=p.dist||'';
-    var key=city+'\u0001'+dist;
-    if(!groups[key]){groups[key]={city:city,dist:dist,items:[],min:Infinity};order.push(key);}
-    groups[key].items.push(p);
-    if(p._d<groups[key].min)groups[key].min=p._d;
+  var tree=buildPlaceTree();
+  if(!treeInit){
+    treeInit=true;
+    expCity=tree.cities[0]?tree.cities[0].city:null;
+    expDist=(tree.cities[0]&&tree.cities[0].subs[0])?tree.cities[0].subs[0].name:null;
+  }
+  el.className='tree';
+  var html='<div class="chips treeAdd">'+addPlaceChip+'</div>';
+  if(!tree.cities.length&&!tree.noC.length)html+='<div class="empty" style="padding:14px 0">還沒有地點</div>';
+  tree.cities.forEach(function(c){
+    var open=(c.city===expCity);
+    html+='<div class="lvl l0'+(open?' open':'')+'" onclick="toggleCity(\''+esc(c.city)+'\')">'
+      +'<span class="lvlName">'+esc(c.city)+'<span class="cnt">'+c.count+'</span></span>'
+      +'<span class="lvlR">'+(isFinite(c.min)?'<span class="distTag">'+fmtDist(c.min)+'</span>':'')+'<i class="ti ti-chevron-down chev"></i></span></div>';
+    if(open)c.subs.forEach(function(sb){
+      var dopen=(sb.name===expDist);
+      html+='<div class="lvl l1'+(dopen?' open':'')+'" onclick="toggleDist(\''+esc(sb.name)+'\')">'
+        +'<span class="lvlName">'+esc(sb.name||'（無行政區）')+'<span class="cnt">'+sb.items.length+'</span></span>'
+        +'<span class="lvlR">'+(isFinite(sb.min)?'<span class="distTag">'+fmtDist(sb.min)+'</span>':'')+'<i class="ti ti-chevron-down chev"></i></span></div>';
+      if(dopen)html+='<div class="chips lvlChips">'+sb.items.map(function(p){return placeChip(p,true);}).join('')+'</div>';
+    });
   });
-  order.sort(function(a,b){return groups[a].min-groups[b].min;});
-  var html=addPlaceChip;
-  order.forEach(function(key){
-    var g=groups[key];g.items.sort(function(a,b){return a._d-b._d;});
-    html+='<div class="grpLabel">'+esc(g.city+(g.dist?' · '+g.dist:''))+'</div>';
-    html+=g.items.map(function(p){return placeChip(p,true);}).join('');
-  });
-  if(noC.length)html+='<div class="grpLabel">未定位</div>'+noC.map(function(p){return placeChip(p,false);}).join('');
+  if(tree.noC.length){
+    var nopen=(expCity==='未定位');
+    html+='<div class="lvl l0'+(nopen?' open':'')+'" onclick="toggleCity(\'未定位\')"><span class="lvlName">未定位<span class="cnt">'+tree.noC.length+'</span></span><span class="lvlR"><i class="ti ti-chevron-down chev"></i></span></div>';
+    if(nopen)html+='<div class="chips lvlChips">'+tree.noC.map(function(p){return placeChip(p,false);}).join('')+'</div>';
+  }
   var need=S.places.filter(function(p){return p.lat!=null&&!p.city&&!p._rgFail;}).length;
   if(need)html+='<div class="grpLabel">整理行政區中…（剩 '+need+' 個）</div>';
   el.innerHTML=html;
   if(need&&!regionBusy)resolveRegionsLoop();
 }
+function buildPlaceTree(){
+  var withC=[],noC=[];
+  S.places.forEach(function(p){
+    if(p.lat!=null){p._d=myPos?haversine(myPos.lat,myPos.lng,p.lat,p.lng):null;withC.push(p);}
+    else noC.push(p);
+  });
+  var cmap={},corder=[];
+  withC.forEach(function(p){
+    var city=p.city||'待分區';
+    if(!cmap[city]){cmap[city]={city:city,count:0,min:Infinity,dmap:{},dorder:[]};corder.push(city);}
+    var C=cmap[city];C.count++;
+    if(p._d!=null&&p._d<C.min)C.min=p._d;
+    var dn=p.dist||'';
+    if(!C.dmap[dn]){C.dmap[dn]={name:dn,items:[],min:Infinity};C.dorder.push(dn);}
+    var D=C.dmap[dn];D.items.push(p);
+    if(p._d!=null&&p._d<D.min)D.min=p._d;
+  });
+  var cities=corder.map(function(k){return cmap[k];});
+  cities.forEach(function(C){
+    C.subs=C.dorder.map(function(k){return C.dmap[k];});
+    if(myPos){C.subs.sort(function(a,b){return a.min-b.min;});C.subs.forEach(function(D){D.items.sort(function(a,b){return a._d-b._d;});});}
+    else{C.subs.sort(function(a,b){return (a.name||'').localeCompare(b.name||'');});C.subs.forEach(function(D){D.items.sort(function(a,b){return (a.row||0)-(b.row||0);});});}
+  });
+  if(myPos)cities.sort(function(a,b){return a.min-b.min;});
+  else cities.sort(function(a,b){return a.city.localeCompare(b.city);});
+  return {cities:cities,noC:noC};
+}
+function toggleCity(c){
+  if(expCity===c){expCity=null;expDist=null;}
+  else{
+    expCity=c;expDist=null;
+    var cc=null;buildPlaceTree().cities.forEach(function(x){if(x.city===c)cc=x;});
+    if(cc&&cc.subs[0])expDist=cc.subs[0].name;
+  }
+  renderPlaceChips();
+}
+function toggleDist(d){expDist=(expDist===d?null:d);renderPlaceChips();}
 function requestPos(cb){
   if(!navigator.geolocation){cb&&cb();return;}
   navigator.geolocation.getCurrentPosition(
