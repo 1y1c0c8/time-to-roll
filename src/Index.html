@@ -63,6 +63,9 @@ header{padding:max(14px,env(safe-area-inset-top)) 18px 6px;
 .chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 .chip.add{background:var(--accent-soft);color:var(--accent);border-color:transparent}
 .chip .tag{font-size:10px;opacity:.7;margin-left:5px;font-weight:600}
+.pChip{-webkit-touch-callout:none;user-select:none;-webkit-user-select:none}
+.chip .favH{color:#d6455b}
+.chip.on .favH{color:#fff}
 .placeHd{display:flex;align-items:center;justify-content:space-between;margin:16px 4px 8px}
 .segMini{display:inline-flex;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:3px;gap:2px}
 .segMini button{border:0;background:transparent;color:var(--muted);font-weight:700;font-size:12px;padding:5px 13px;border-radius:999px;cursor:pointer;font-family:inherit}
@@ -188,9 +191,21 @@ header{padding:max(14px,env(safe-area-inset-top)) 18px 6px;
         <div class="sect-title">使用中的菸草包</div>
         <div id="pouchPick" class="chips"></div>
       </div>
-      <div class="sect-title">原因</div>
+      <div class="placeHd">
+        <div class="sect-title" style="margin:0">原因</div>
+        <div class="segMini" id="reasonModeSeg">
+          <button data-m="recent" class="on" onclick="setReasonMode('recent')">最近</button>
+          <button data-m="order" onclick="setReasonMode('order')">出現</button>
+        </div>
+      </div>
       <div id="reasonChips" class="chips"></div>
-      <div class="sect-title">跟誰（可選）</div>
+      <div class="placeHd">
+        <div class="sect-title" style="margin:0">跟誰（可選）</div>
+        <div class="segMini" id="peopleModeSeg">
+          <button data-m="near" class="on" onclick="setPeopleMode('near')">近揪</button>
+          <button data-m="order" onclick="setPeopleMode('order')">軌跡</button>
+        </div>
+      </div>
       <div id="peopleChips" class="chips"></div>
       <div class="placeHd">
         <div class="sect-title" style="margin:0">在哪（可選）</div>
@@ -535,11 +550,25 @@ function openPouchFor(productId){
   }).withFailureHandler(err).openPouch({productId:productId});
 }
 
+var DAY=86400000;
+function recencyBucket(ms){if(ms==null||!ms)return 2;var age=Date.now()-ms;if(age<3*DAY)return 0;if(age<7*DAY)return 1;return 2;}
+var RECLABEL=['三天內','三天到一週','一週以上'];
+var reasonAdd='<button class="chip add" onclick="quickAddReason()"><i class="ti ti-plus"></i> 新增</button>';
+function reasonChip(r){return '<button class="chip'+(r.name===selR?' on':'')+'" onclick="pickR(\''+esc(r.name)+'\')">'+esc(r.name)+'</button>';}
+function setReasonMode(m){if(reasonMode===m)return;reasonMode=m;var s=$('reasonModeSeg');if(s)s.querySelectorAll('button').forEach(function(b){b.classList.toggle('on',b.dataset.m===m);});renderReasonChips();}
 function renderReasonChips(){
-  var el=$('reasonChips');
-  el.innerHTML=S.reasons.map(function(r){
-    return '<button class="chip'+(r.name===selR?' on':'')+'" onclick="pickR(\''+esc(r.name)+'\')">'+esc(r.name)+'</button>';
-  }).join('')+'<button class="chip add" onclick="quickAddReason()"><i class="ti ti-plus"></i> 新增</button>';
+  var el=$('reasonChips');if(!el)return;el.className='chips';
+  if(reasonMode!=='recent'){el.innerHTML=S.reasons.map(reasonChip).join('')+reasonAdd;return;}
+  var R=(S.recency&&S.recency.reasons)||{};
+  var buckets=[[],[],[]];
+  S.reasons.forEach(function(r){var ms=R[r.name]||0;buckets[recencyBucket(ms)].push({r:r,ms:ms});});
+  var html='';
+  buckets.forEach(function(arr,bi){
+    if(!arr.length)return;
+    arr.sort(function(a,b){return b.ms-a.ms;});
+    html+='<div class="grpLabel">'+RECLABEL[bi]+'</div>'+arr.map(function(x){return reasonChip(x.r);}).join('');
+  });
+  el.innerHTML=html+reasonAdd;
 }
 function pickR(n){selR=n;renderReasonChips();updateSaveBtn();}
 
@@ -558,13 +587,44 @@ function quickAddReason(){
     .withFailureHandler(err).addReason(n);
 }
 
-function renderPeopleChips(){
-  var el=$('peopleChips');if(!el)return;
-  el.innerHTML=S.people.map(function(pp){
-    return '<button class="chip'+(selPeople.indexOf(pp.name)>=0?' on':'')+'" onclick="togglePerson(\''+esc(pp.name)+'\')">'+esc(pp.name)+'</button>';
-  }).join('')+'<button class="chip add" onclick="quickAddPerson()"><i class="ti ti-plus"></i> 新增</button>';
+var peopleAdd='<button class="chip add" onclick="quickAddPerson()"><i class="ti ti-plus"></i> 新增</button>';
+function personChip(pp){
+  var on=selPeople.indexOf(pp.name)>=0;
+  var heart=pp.fav?'<span class="favH">♥</span> ':'';
+  return '<button class="chip pChip'+(on?' on':'')+'" onclick="togglePerson(\''+esc(pp.name)+'\')"'
+    +' ontouchstart="lpStart(\''+esc(pp.name)+'\')" ontouchend="lpEnd()" ontouchmove="lpEnd()" oncontextmenu="return lpCtx(event)">'
+    +heart+esc(pp.name)+'</button>';
 }
-function togglePerson(n){var i=selPeople.indexOf(n);if(i>=0)selPeople.splice(i,1);else selPeople.push(n);renderPeopleChips();}
+function setPeopleMode(m){if(peopleMode===m)return;peopleMode=m;var s=$('peopleModeSeg');if(s)s.querySelectorAll('button').forEach(function(b){b.classList.toggle('on',b.dataset.m===m);});renderPeopleChips();}
+function renderPeopleChips(){
+  var el=$('peopleChips');if(!el)return;el.className='chips';
+  if(peopleMode!=='near'){el.innerHTML=S.people.map(personChip).join('')+peopleAdd;return;}
+  var P=(S.recency&&S.recency.people)||{};
+  var fav=[],buckets=[[],[],[]];
+  S.people.forEach(function(pp){var ms=P[pp.name]||0;if(pp.fav){fav.push({p:pp,ms:ms});}else{buckets[recencyBucket(ms)].push({p:pp,ms:ms});}});
+  var html='';
+  if(fav.length){fav.sort(function(a,b){return b.ms-a.ms;});html+='<div class="grpLabel">最愛</div>'+fav.map(function(x){return personChip(x.p);}).join('');}
+  buckets.forEach(function(arr,bi){
+    if(!arr.length)return;
+    arr.sort(function(a,b){return b.ms-a.ms;});
+    html+='<div class="grpLabel">'+RECLABEL[bi]+'</div>'+arr.map(function(x){return personChip(x.p);}).join('');
+  });
+  el.innerHTML=html+peopleAdd;
+}
+var lpTimer=null, lpFired=false;
+function lpStart(name){lpFired=false;if(lpTimer)clearTimeout(lpTimer);lpTimer=setTimeout(function(){lpFired=true;lpTimer=null;togglePersonFav(name);},550);}
+function lpEnd(){if(lpTimer){clearTimeout(lpTimer);lpTimer=null;}}
+function lpCtx(e){if(e&&e.preventDefault)e.preventDefault();return false;}
+function togglePerson(n){if(lpFired){lpFired=false;return;}var i=selPeople.indexOf(n);if(i>=0)selPeople.splice(i,1);else selPeople.push(n);renderPeopleChips();}
+function togglePersonFav(name){
+  var p=null;for(var i=0;i<S.people.length;i++)if(S.people[i].name===name){p=S.people[i];break;}
+  if(!p)return;
+  p.fav=!p.fav;
+  renderPeopleChips();
+  toast(p.fav?('♥ 已設為最愛：'+name):('已取消最愛：'+name));
+  if(navigator.vibrate){try{navigator.vibrate(15);}catch(e){}}
+  google.script.run.withSuccessHandler(function(ps){var favmap={};ps.forEach(function(x){favmap[x.name]=x.fav;});S.people.forEach(function(x){if(favmap[x.name]!=null)x.fav=favmap[x.name];});}).withFailureHandler(err).setPersonFav({name:name,fav:p.fav});
+}
 function quickAddPerson(){
   var n=prompt('新增人物');if(!n)return;
   google.script.run.withSuccessHandler(function(ps){S.people=ps;if(selPeople.indexOf(n.trim())<0)selPeople.push(n.trim());renderPeopleChips();renderPeopleMgr();toast('已新增');})
@@ -573,6 +633,7 @@ function quickAddPerson(){
 
 var placeMode='nearby', myPos=null, posTried=false, regionBusy=false;
 var expCity=null, expDist=null, treeInit=false;
+var reasonMode='recent', peopleMode='near';
 var addPlaceChip='<button class="chip add" onclick="quickAddPlace()"><i class="ti ti-plus"></i> 新增地點</button>';
 
 function setPlaceMode(m){
@@ -772,7 +833,11 @@ function doSmoke(){
   $('saveBtn').disabled=true;
   var pp=selPeople.slice(), pl=selPlace||'';
   google.script.run.withSuccessHandler(function(st){
-    selPeople=[];selPlace=null;selDay=localDateStr(new Date());renderPeopleChips();renderPlaceChips();applyState(st);
+    var nowMs=Date.now();
+    if(!S.recency)S.recency={reasons:{},people:{}};
+    if(selR)S.recency.reasons[selR]=nowMs;
+    pp.forEach(function(nm){S.recency.people[nm]=nowMs;});
+    selPeople=[];selPlace=null;selDay=localDateStr(new Date());renderReasonChips();renderPeopleChips();renderPlaceChips();applyState(st);
     smokeBubble_();
     if(st&&st.wish){openWishSheet({id:st.wish.id,month:st.wish.month,tag:st.wish.tag,wishId:st.wish.wishId,editing:false,sub:wishSub_(st.wish)},'');}
   }).withFailureHandler(function(e){$('saveBtn').disabled=false;err(e);})

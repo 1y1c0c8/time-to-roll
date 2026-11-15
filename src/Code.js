@@ -41,8 +41,8 @@ var REASON_HEADERS = ['名稱', '排序', '啟用', '計入統計'];
 
 // 人物 columns（結構同原因）
 var SHEET_PEOPLE = '人物';
-var PE_NAME = 1, PE_ORDER = 2, PE_ACTIVE = 3;
-var PEOPLE_HEADERS = ['名稱', '排序', '啟用'];
+var PE_NAME = 1, PE_ORDER = 2, PE_ACTIVE = 3, PE_FAV = 4;
+var PEOPLE_HEADERS = ['名稱', '排序', '啟用', '最愛'];
 
 // 地點 columns（結構同原因，多兩欄座標）
 var SHEET_PLACES = '地點';
@@ -143,8 +143,36 @@ function getBootData() {
     products: getProducts(),
     pouches: getPouches(),
     records: getMonthRecords(tab),
-    thisMonth: tab
+    thisMonth: tab,
+    recency: getRecency()
   };
+}
+
+/* 掃最近兩個有資料的月分頁，回每個原因/人物「最後一次使用」的毫秒時間（足夠分三天/一週的桶） */
+function getRecency() {
+  var tabs = ss().getSheets().map(function (s) { return s.getName(); })
+    .filter(function (n) { return /^\d{4}-\d{2}$/.test(n); }).sort().reverse();
+  var reasons = {}, people = {}, count = 0;
+  for (var t = 0; t < tabs.length && count < 2; t++) {
+    var s = sh(tabs[t]);
+    if (!s || s.getLastRow() < 2) continue;
+    count++;
+    var v = s.getRange(2, 1, s.getLastRow() - 1, R_PEOPLE).getValues();
+    v.forEach(function (row) {
+      if (String(row[R_ID - 1]).trim() === '') return;
+      var tm = row[R_TIME - 1];
+      var d = (tm instanceof Date) ? tm : new Date(tm);
+      var ms = d.getTime();
+      if (!ms) return;
+      var rsn = String(row[R_REASON - 1] || '').trim();
+      if (rsn && (!reasons[rsn] || ms > reasons[rsn])) reasons[rsn] = ms;
+      String(row[R_PEOPLE - 1] || '').split(PEOPLE_SEP).forEach(function (nm) {
+        nm = nm.trim();
+        if (nm && (!people[nm] || ms > people[nm])) people[nm] = ms;
+      });
+    });
+  }
+  return { reasons: reasons, people: people };
 }
 
 function ensureReady_() {
@@ -169,6 +197,9 @@ function migrate_() {
     if (String(lo.getRange(1, LO_DIST).getValue()).trim() !== '行政區')
       lo.getRange(1, LO_DIST).setValue('行政區').setFontWeight('bold').setBackground('#e3efed');
   }
+  var pe = sh(SHEET_PEOPLE);
+  if (pe && String(pe.getRange(1, PE_FAV).getValue()).trim() !== '最愛')
+    pe.getRange(1, PE_FAV).setValue('最愛').setFontWeight('bold').setBackground('#e3efed');
   // 月分頁補上「人物」表頭（R_PEOPLE 欄）
   ss().getSheets().forEach(function (s) {
     if (!/^\d{4}-\d{2}$/.test(s.getName())) return;
@@ -563,13 +594,14 @@ function joinPeople_(arr) { return (arr || []).filter(Boolean).join(PEOPLE_SEP);
 function getPeople() {
   var s = sh(SHEET_PEOPLE);
   if (!s || s.getLastRow() < 2) return [];
-  var v = s.getRange(2, 1, s.getLastRow() - 1, 3).getValues();
+  var v = s.getRange(2, 1, s.getLastRow() - 1, 4).getValues();
   var out = [];
   v.forEach(function (row, i) {
     if (String(row[PE_NAME - 1]).trim() === '') return;
     var active = row[PE_ACTIVE - 1] !== false && String(row[PE_ACTIVE - 1]).toUpperCase() !== 'FALSE';
     if (!active) return;
-    out.push({ name: String(row[PE_NAME - 1]).trim(), order: Number(row[PE_ORDER - 1]) || i, row: i + 2 });
+    var fav = row[PE_FAV - 1] === true || String(row[PE_FAV - 1]).toUpperCase() === 'TRUE';
+    out.push({ name: String(row[PE_NAME - 1]).trim(), order: Number(row[PE_ORDER - 1]) || i, fav: fav, row: i + 2 });
   });
   out.sort(function (a, b) { return a.order - b.order; });
   return out;
@@ -581,7 +613,19 @@ function addPerson(name) {
   if (!name) throw new Error('名字不能空白');
   if (getPeople().some(function (p) { return p.name === name; })) throw new Error('這個人已經有了');
   var s = sh(SHEET_PEOPLE);
-  s.appendRow([name, s.getLastRow(), true]);
+  s.appendRow([name, s.getLastRow(), true, false]);
+  return getPeople();
+}
+
+function setPersonFav(p) {
+  var s = sh(SHEET_PEOPLE);
+  if (!s || s.getLastRow() < 2) return getPeople();
+  var v = s.getRange(2, 1, s.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < v.length; i++)
+    if (String(v[i][0]).trim() === String(p.name).trim()) {
+      s.getRange(i + 2, PE_FAV).setValue(!!p.fav);
+      break;
+    }
   return getPeople();
 }
 
