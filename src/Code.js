@@ -667,8 +667,7 @@ function addPlace(p) {
   var s = sh(SHEET_PLACES);
   var lat = (p.lat == null || p.lat === '') ? '' : Number(p.lat);
   var lng = (p.lng == null || p.lng === '') ? '' : Number(p.lng);
-  var g = (lat !== '' && lng !== '') ? reverseGeocode_(lat, lng) : { city: '', dist: '' };
-  s.appendRow([name, s.getLastRow(), true, lat, lng, g.city, g.dist]);
+  s.appendRow([name, s.getLastRow(), true, lat, lng, '', '']);
   return getPlaces();
 }
 
@@ -682,57 +681,25 @@ function setPlaceCoord(p) {
       var lng = (p.lng == null || p.lng === '') ? '' : Number(p.lng);
       s.getRange(i + 2, LO_LAT).setValue(lat);
       s.getRange(i + 2, LO_LNG).setValue(lng);
-      var g = (lat !== '' && lng !== '') ? reverseGeocode_(lat, lng) : { city: '', dist: '' };
-      s.getRange(i + 2, LO_CITY).setValue(g.city);
-      s.getRange(i + 2, LO_DIST).setValue(g.dist);
+      s.getRange(i + 2, LO_CITY).setValue('');
+      s.getRange(i + 2, LO_DIST).setValue('');
       break;
     }
   return getPlaces();
 }
 
-/* 反查行政區（OpenStreetMap Nominatim，server 端，不送任何個人識別資訊） */
-function reverseGeocode_(lat, lng) {
-  try {
-    var url = 'https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&addressdetails=1'
-      + '&accept-language=zh-TW&lat=' + encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lng);
-    var resp = UrlFetchApp.fetch(url, {
-      muteHttpExceptions: true,
-      headers: { 'User-Agent': 'TimeToRoll-PWA/1.0 (personal smoking log)' }
-    });
-    if (resp.getResponseCode() !== 200) return { city: '', dist: '' };
-    var a = (JSON.parse(resp.getContentText()) || {}).address || {};
-    var city = a.city || a.county || a.state || a.town || '';
-    var dist = a.suburb || a.city_district || a.district || a.town || a.village || a.quarter || '';
-    if (dist === city) dist = '';
-    return { city: String(city), dist: String(dist) };
-  } catch (e) {
-    return { city: '', dist: '' };
-  }
-}
-
-/* 分批補齊既有地點的縣市/行政區（Nominatim 限每秒一次，前端可重複呼叫直到 remaining=0） */
-function resolvePlaceRegions(limit) {
-  ensureReady_();
-  limit = limit || 8;
+/* 行政區由前端（手機端）反查後寫回，這裡只存，不呼叫任何外部服務 */
+function setPlaceRegion(p) {
   var s = sh(SHEET_PLACES);
-  if (!s || s.getLastRow() < 2) return { places: [], remaining: 0, resolved: 0 };
-  var places = getPlaces();
-  var attempted = 0, resolved = 0;
-  for (var i = 0; i < places.length; i++) {
-    var p = places[i];
-    if (p.lat == null || p.city) continue;
-    if (attempted >= limit) break;
-    attempted++;
-    var g = reverseGeocode_(p.lat, p.lng);
-    if (g && (g.city || g.dist)) {
-      s.getRange(p.row, LO_CITY).setValue(g.city);
-      s.getRange(p.row, LO_DIST).setValue(g.dist);
-      resolved++;
+  if (!s || s.getLastRow() < 2) return getPlaces();
+  var v = s.getRange(2, 1, s.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < v.length; i++)
+    if (String(v[i][0]).trim() === String(p.name).trim()) {
+      s.getRange(i + 2, LO_CITY).setValue(String(p.city || ''));
+      s.getRange(i + 2, LO_DIST).setValue(String(p.dist || ''));
+      break;
     }
-    if (attempted < limit) Utilities.sleep(1100);
-  }
-  var remaining = getPlaces().filter(function (x) { return x.lat != null && !x.city; }).length;
-  return { places: getPlaces(), remaining: remaining, resolved: resolved };
+  return getPlaces();
 }
 
 function deletePlace(name) {

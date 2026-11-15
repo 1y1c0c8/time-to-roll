@@ -557,12 +557,13 @@ function quickAddPerson(){
     .withFailureHandler(err).addPerson(n);
 }
 
-var placeMode='trail', myPos=null, posTried=false, regionBusy=false, regionStuck=false;
+var placeMode='trail', myPos=null, posTried=false, regionBusy=false;
 var addPlaceChip='<button class="chip add" onclick="quickAddPlace()"><i class="ti ti-plus"></i> 新增地點</button>';
 
 function setPlaceMode(m){
   if(placeMode===m)return;
-  placeMode=m;regionStuck=false;
+  placeMode=m;
+  if(m==='nearby')S.places.forEach(function(p){p._rgFail=false;});
   var seg=$('placeModeSeg');if(seg)seg.querySelectorAll('button').forEach(function(b){b.classList.toggle('on',b.dataset.m===m);});
   renderPlaceChips();
 }
@@ -614,10 +615,10 @@ function renderPlaceChips(){
     html+=g.items.map(function(p){return placeChip(p,true);}).join('');
   });
   if(noC.length)html+='<div class="grpLabel">未定位</div>'+noC.map(function(p){return placeChip(p,false);}).join('');
-  var need=S.places.filter(function(p){return p.lat!=null&&!p.city;}).length;
+  var need=S.places.filter(function(p){return p.lat!=null&&!p.city&&!p._rgFail;}).length;
   if(need)html+='<div class="grpLabel">整理行政區中…（剩 '+need+' 個）</div>';
   el.innerHTML=html;
-  if(need&&!regionBusy&&!regionStuck)resolveRegionsLoop();
+  if(need&&!regionBusy)resolveRegionsLoop();
 }
 function requestPos(cb){
   if(!navigator.geolocation){cb&&cb();return;}
@@ -626,19 +627,36 @@ function requestPos(cb){
     function(){cb&&cb();},
     {enableHighAccuracy:true,timeout:10000,maximumAge:120000});
 }
+function reverseGeocodeClient(lat,lng,cb){
+  var url='https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&addressdetails=1&accept-language=zh-TW&lat='+encodeURIComponent(lat)+'&lon='+encodeURIComponent(lng);
+  fetch(url,{headers:{Accept:'application/json'}}).then(function(r){return r.ok?r.json():null;}).then(function(j){
+    var a=(j&&j.address)||null;
+    if(!a){cb(null);return;}
+    var city=a.city||a.county||a.state||a.town||'';
+    var dist=a.suburb||a.city_district||a.district||a.town||a.village||a.quarter||'';
+    if(dist===city)dist='';
+    cb({city:String(city),dist:String(dist)});
+  }).catch(function(){cb(null);});
+}
 function resolveRegionsLoop(){
+  if(regionBusy)return;
   regionBusy=true;
-  google.script.run.withSuccessHandler(function(res){
-    if(res&&res.places)S.places=res.places;
-    if(res&&res.remaining>0&&res.resolved>0){
-      if(placeMode==='nearby')renderPlaceChips();
-      resolveRegionsLoop();
+  regionStep();
+}
+function regionStep(){
+  var p=null;
+  for(var i=0;i<S.places.length;i++){var x=S.places[i];if(x.lat!=null&&!x.city&&!x._rgFail){p=x;break;}}
+  if(!p){regionBusy=false;if(placeMode==='nearby')renderPlaceChips();return;}
+  reverseGeocodeClient(p.lat,p.lng,function(g){
+    if(g&&(g.city||g.dist)){
+      p.city=g.city;p.dist=g.dist;
+      google.script.run.withFailureHandler(function(){}).setPlaceRegion({name:p.name,city:g.city,dist:g.dist});
     }else{
-      regionBusy=false;
-      if(res&&res.remaining>0&&(!res.resolved))regionStuck=true;
-      if(placeMode==='nearby')renderPlaceChips();
+      p._rgFail=true;
     }
-  }).withFailureHandler(function(e){regionBusy=false;regionStuck=true;}).resolvePlaceRegions(8);
+    if(placeMode==='nearby')renderPlaceChips();
+    setTimeout(regionStep,1100);
+  });
 }
 function pickPlace(n){selPlace=(selPlace===n?null:n);renderPlaceChips();}
 function quickAddPlace(){
