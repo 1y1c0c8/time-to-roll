@@ -149,10 +149,12 @@ function getBootData() {
 }
 
 /* 掃最近兩個有資料的月分頁，回每個原因/人物「最後一次使用」的毫秒時間（足夠分三天/一週的桶） */
+var FREQ_WINDOW_DAYS = 30;  // 桶內以「近 N 天使用次數」排序；改這裡即可
 function getRecency() {
   var tabs = ss().getSheets().map(function (s) { return s.getName(); })
     .filter(function (n) { return /^\d{4}-\d{2}$/.test(n); }).sort().reverse();
-  var reasons = {}, people = {}, count = 0;
+  var reasons = {}, people = {}, reasonCount = {}, peopleCount = {}, count = 0;
+  var cutoff = Date.now() - FREQ_WINDOW_DAYS * 86400000;
   for (var t = 0; t < tabs.length && count < 2; t++) {
     var s = sh(tabs[t]);
     if (!s || s.getLastRow() < 2) continue;
@@ -164,15 +166,21 @@ function getRecency() {
       var d = (tm instanceof Date) ? tm : new Date(tm);
       var ms = d.getTime();
       if (!ms) return;
+      var recent = ms >= cutoff;
       var rsn = String(row[R_REASON - 1] || '').trim();
-      if (rsn && (!reasons[rsn] || ms > reasons[rsn])) reasons[rsn] = ms;
+      if (rsn) {
+        if (!reasons[rsn] || ms > reasons[rsn]) reasons[rsn] = ms;
+        if (recent) reasonCount[rsn] = (reasonCount[rsn] || 0) + 1;
+      }
       String(row[R_PEOPLE - 1] || '').split(PEOPLE_SEP).forEach(function (nm) {
         nm = nm.trim();
-        if (nm && (!people[nm] || ms > people[nm])) people[nm] = ms;
+        if (!nm) return;
+        if (!people[nm] || ms > people[nm]) people[nm] = ms;
+        if (recent) peopleCount[nm] = (peopleCount[nm] || 0) + 1;
       });
     });
   }
-  return { reasons: reasons, people: people };
+  return { reasons: reasons, people: people, reasonCount: reasonCount, peopleCount: peopleCount };
 }
 
 function ensureReady_() {
