@@ -46,8 +46,8 @@ var PEOPLE_HEADERS = ['名稱', '排序', '啟用'];
 
 // 地點 columns（結構同原因，多兩欄座標）
 var SHEET_PLACES = '地點';
-var LO_NAME = 1, LO_ORDER = 2, LO_ACTIVE = 3, LO_LAT = 4, LO_LNG = 5;
-var PLACES_HEADERS = ['名稱', '排序', '啟用', '緯度', '經度'];
+var LO_NAME = 1, LO_ORDER = 2, LO_ACTIVE = 3, LO_LAT = 4, LO_LNG = 5, LO_CITY = 6, LO_DIST = 7;
+var PLACES_HEADERS = ['名稱', '排序', '啟用', '緯度', '經度', '縣市', '行政區'];
 
 // 菸草包 columns (P2, 1-based, fixed)
 var G_ID = 1, G_PID = 2, G_NAME = 3, G_OPEN = 4, G_DONE = 5, G_ROLLED = 6, G_PRICE = 7, G_STATUS = 8;
@@ -161,6 +161,13 @@ function migrate_() {
   var rs = sh(SHEET_REASONS);
   if (rs && String(rs.getRange(1, RS_STATS).getValue()).trim() !== '計入統計') {
     rs.getRange(1, RS_STATS).setValue('計入統計').setFontWeight('bold').setBackground('#e3efed');
+  }
+  var lo = sh(SHEET_PLACES);
+  if (lo) {
+    if (String(lo.getRange(1, LO_CITY).getValue()).trim() !== '縣市')
+      lo.getRange(1, LO_CITY).setValue('縣市').setFontWeight('bold').setBackground('#e3efed');
+    if (String(lo.getRange(1, LO_DIST).getValue()).trim() !== '行政區')
+      lo.getRange(1, LO_DIST).setValue('行政區').setFontWeight('bold').setBackground('#e3efed');
   }
   // 月分頁補上「人物」表頭（R_PEOPLE 欄）
   ss().getSheets().forEach(function (s) {
@@ -631,7 +638,7 @@ function reorderPeople(names) {
 function getPlaces() {
   var s = sh(SHEET_PLACES);
   if (!s || s.getLastRow() < 2) return [];
-  var v = s.getRange(2, 1, s.getLastRow() - 1, 5).getValues();
+  var v = s.getRange(2, 1, s.getLastRow() - 1, 7).getValues();
   var out = [];
   v.forEach(function (row, i) {
     if (String(row[LO_NAME - 1]).trim() === '') return;
@@ -643,6 +650,8 @@ function getPlaces() {
       order: Number(row[LO_ORDER - 1]) || i,
       lat: (lat === '' || lat == null) ? null : Number(lat),
       lng: (lng === '' || lng == null) ? null : Number(lng),
+      city: String(row[LO_CITY - 1] || '').trim(),
+      dist: String(row[LO_DIST - 1] || '').trim(),
       row: i + 2
     });
   });
@@ -658,7 +667,8 @@ function addPlace(p) {
   var s = sh(SHEET_PLACES);
   var lat = (p.lat == null || p.lat === '') ? '' : Number(p.lat);
   var lng = (p.lng == null || p.lng === '') ? '' : Number(p.lng);
-  s.appendRow([name, s.getLastRow(), true, lat, lng]);
+  var g = (lat !== '' && lng !== '') ? reverseGeocode_(lat, lng) : { city: '', dist: '' };
+  s.appendRow([name, s.getLastRow(), true, lat, lng, g.city, g.dist]);
   return getPlaces();
 }
 
@@ -668,11 +678,61 @@ function setPlaceCoord(p) {
   var v = s.getRange(2, 1, s.getLastRow() - 1, 1).getValues();
   for (var i = 0; i < v.length; i++)
     if (String(v[i][0]).trim() === String(p.name).trim()) {
-      s.getRange(i + 2, LO_LAT).setValue((p.lat == null || p.lat === '') ? '' : Number(p.lat));
-      s.getRange(i + 2, LO_LNG).setValue((p.lng == null || p.lng === '') ? '' : Number(p.lng));
+      var lat = (p.lat == null || p.lat === '') ? '' : Number(p.lat);
+      var lng = (p.lng == null || p.lng === '') ? '' : Number(p.lng);
+      s.getRange(i + 2, LO_LAT).setValue(lat);
+      s.getRange(i + 2, LO_LNG).setValue(lng);
+      var g = (lat !== '' && lng !== '') ? reverseGeocode_(lat, lng) : { city: '', dist: '' };
+      s.getRange(i + 2, LO_CITY).setValue(g.city);
+      s.getRange(i + 2, LO_DIST).setValue(g.dist);
       break;
     }
   return getPlaces();
+}
+
+/* 反查行政區（OpenStreetMap Nominatim，server 端，不送任何個人識別資訊） */
+function reverseGeocode_(lat, lng) {
+  try {
+    var url = 'https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&addressdetails=1'
+      + '&accept-language=zh-TW&lat=' + encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lng);
+    var resp = UrlFetchApp.fetch(url, {
+      muteHttpExceptions: true,
+      headers: { 'User-Agent': 'TimeToRoll-PWA/1.0 (personal smoking log)' }
+    });
+    if (resp.getResponseCode() !== 200) return { city: '', dist: '' };
+    var a = (JSON.parse(resp.getContentText()) || {}).address || {};
+    var city = a.city || a.county || a.state || a.town || '';
+    var dist = a.suburb || a.city_district || a.district || a.town || a.village || a.quarter || '';
+    if (dist === city) dist = '';
+    return { city: String(city), dist: String(dist) };
+  } catch (e) {
+    return { city: '', dist: '' };
+  }
+}
+
+/* 分批補齊既有地點的縣市/行政區（Nominatim 限每秒一次，前端可重複呼叫直到 remaining=0） */
+function resolvePlaceRegions(limit) {
+  ensureReady_();
+  limit = limit || 8;
+  var s = sh(SHEET_PLACES);
+  if (!s || s.getLastRow() < 2) return { places: [], remaining: 0, resolved: 0 };
+  var places = getPlaces();
+  var attempted = 0, resolved = 0;
+  for (var i = 0; i < places.length; i++) {
+    var p = places[i];
+    if (p.lat == null || p.city) continue;
+    if (attempted >= limit) break;
+    attempted++;
+    var g = reverseGeocode_(p.lat, p.lng);
+    if (g && (g.city || g.dist)) {
+      s.getRange(p.row, LO_CITY).setValue(g.city);
+      s.getRange(p.row, LO_DIST).setValue(g.dist);
+      resolved++;
+    }
+    if (attempted < limit) Utilities.sleep(1100);
+  }
+  var remaining = getPlaces().filter(function (x) { return x.lat != null && !x.city; }).length;
+  return { places: getPlaces(), remaining: remaining, resolved: resolved };
 }
 
 function deletePlace(name) {
