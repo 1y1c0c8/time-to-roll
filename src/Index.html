@@ -63,6 +63,11 @@ header{padding:max(14px,env(safe-area-inset-top)) 18px 6px;
 .chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 .chip.add{background:var(--accent-soft);color:var(--accent);border-color:transparent}
 .chip .tag{font-size:10px;opacity:.7;margin-left:5px;font-weight:600}
+.placeHd{display:flex;align-items:center;justify-content:space-between;margin:16px 4px 8px}
+.segMini{display:inline-flex;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:3px;gap:2px}
+.segMini button{border:0;background:transparent;color:var(--muted);font-weight:700;font-size:12px;padding:5px 13px;border-radius:999px;cursor:pointer;font-family:inherit}
+.segMini button.on{background:var(--accent-soft);color:var(--accent)}
+.grpLabel{flex-basis:100%;font-size:11px;color:var(--muted);font-weight:700;margin:8px 2px 0}
 
 .row{display:flex;align-items:center;gap:12px;padding:13px 16px;border-top:1px solid var(--line)}
 .row:first-child{border-top:0}
@@ -173,7 +178,13 @@ header{padding:max(14px,env(safe-area-inset-top)) 18px 6px;
       <div id="reasonChips" class="chips"></div>
       <div class="sect-title">跟誰（可選）</div>
       <div id="peopleChips" class="chips"></div>
-      <div class="sect-title">在哪（可選）</div>
+      <div class="placeHd">
+        <div class="sect-title" style="margin:0">在哪（可選）</div>
+        <div class="segMini" id="placeModeSeg">
+          <button data-m="trail" class="on" onclick="setPlaceMode('trail')">足跡</button>
+          <button data-m="nearby" onclick="setPlaceMode('nearby')">附近</button>
+        </div>
+      </div>
       <div id="placeChips" class="chips"></div>
     </div>
 
@@ -546,11 +557,88 @@ function quickAddPerson(){
     .withFailureHandler(err).addPerson(n);
 }
 
+var placeMode='trail', myPos=null, posTried=false, regionBusy=false, regionStuck=false;
+var addPlaceChip='<button class="chip add" onclick="quickAddPlace()"><i class="ti ti-plus"></i> 新增地點</button>';
+
+function setPlaceMode(m){
+  if(placeMode===m)return;
+  placeMode=m;regionStuck=false;
+  var seg=$('placeModeSeg');if(seg)seg.querySelectorAll('button').forEach(function(b){b.classList.toggle('on',b.dataset.m===m);});
+  renderPlaceChips();
+}
+function haversine(la1,lo1,la2,lo2){
+  var R=6371,toR=function(d){return d*Math.PI/180;};
+  var dLa=toR(la2-la1),dLo=toR(lo2-lo1);
+  var a=Math.sin(dLa/2)*Math.sin(dLa/2)+Math.cos(toR(la1))*Math.cos(toR(la2))*Math.sin(dLo/2)*Math.sin(dLo/2);
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function fmtDist(km){if(km<1)return Math.round(km*1000)+' m';return (km<10?km.toFixed(1):Math.round(km))+' km';}
+function placeChip(p,showDist){
+  var pin=(p.lat!=null)?'<i class="ti ti-map-pin" style="font-size:12px"></i> ':'';
+  var d=(showDist&&p._d!=null)?' <span class="tag">'+fmtDist(p._d)+'</span>':'';
+  return '<button class="chip'+(selPlace===p.name?' on':'')+'" onclick="pickPlace(\''+esc(p.name)+'\')">'+pin+esc(p.name)+d+'</button>';
+}
+function placesByCreation(){return S.places.slice().sort(function(a,b){return (a.row||0)-(b.row||0);});}
+
 function renderPlaceChips(){
   var el=$('placeChips');if(!el)return;
-  el.innerHTML=S.places.map(function(pl){
-    return '<button class="chip'+(selPlace===pl.name?' on':'')+'" onclick="pickPlace(\''+esc(pl.name)+'\')">'+(pl.lat!=null?'<i class="ti ti-map-pin" style="font-size:12px"></i> ':'')+esc(pl.name)+'</button>';
-  }).join('')+'<button class="chip add" onclick="quickAddPlace()"><i class="ti ti-plus"></i> 新增地點</button>';
+  if(placeMode!=='nearby'){
+    el.innerHTML=placesByCreation().map(function(p){return placeChip(p,false);}).join('')+addPlaceChip;
+    return;
+  }
+  if(!myPos){
+    if(!posTried){
+      posTried=true;
+      el.innerHTML=addPlaceChip+'<div class="grpLabel">抓取目前位置中…</div>';
+      requestPos(function(){renderPlaceChips();});
+    }else{
+      el.innerHTML=addPlaceChip+'<div class="grpLabel">沒有位置資訊，改用足跡順序</div>'+placesByCreation().map(function(p){return placeChip(p,false);}).join('');
+    }
+    return;
+  }
+  var withC=[],noC=[];
+  S.places.forEach(function(p){if(p.lat!=null){p._d=haversine(myPos.lat,myPos.lng,p.lat,p.lng);withC.push(p);}else{noC.push(p);}});
+  var groups={},order=[];
+  withC.forEach(function(p){
+    var city=p.city||'待分區',dist=p.dist||'';
+    var key=city+'\u0001'+dist;
+    if(!groups[key]){groups[key]={city:city,dist:dist,items:[],min:Infinity};order.push(key);}
+    groups[key].items.push(p);
+    if(p._d<groups[key].min)groups[key].min=p._d;
+  });
+  order.sort(function(a,b){return groups[a].min-groups[b].min;});
+  var html=addPlaceChip;
+  order.forEach(function(key){
+    var g=groups[key];g.items.sort(function(a,b){return a._d-b._d;});
+    html+='<div class="grpLabel">'+esc(g.city+(g.dist?' · '+g.dist:''))+'</div>';
+    html+=g.items.map(function(p){return placeChip(p,true);}).join('');
+  });
+  if(noC.length)html+='<div class="grpLabel">未定位</div>'+noC.map(function(p){return placeChip(p,false);}).join('');
+  var need=S.places.filter(function(p){return p.lat!=null&&!p.city;}).length;
+  if(need)html+='<div class="grpLabel">整理行政區中…（剩 '+need+' 個）</div>';
+  el.innerHTML=html;
+  if(need&&!regionBusy&&!regionStuck)resolveRegionsLoop();
+}
+function requestPos(cb){
+  if(!navigator.geolocation){cb&&cb();return;}
+  navigator.geolocation.getCurrentPosition(
+    function(p){myPos={lat:p.coords.latitude,lng:p.coords.longitude};cb&&cb();},
+    function(){cb&&cb();},
+    {enableHighAccuracy:true,timeout:10000,maximumAge:120000});
+}
+function resolveRegionsLoop(){
+  regionBusy=true;
+  google.script.run.withSuccessHandler(function(res){
+    if(res&&res.places)S.places=res.places;
+    if(res&&res.remaining>0&&res.resolved>0){
+      if(placeMode==='nearby')renderPlaceChips();
+      resolveRegionsLoop();
+    }else{
+      regionBusy=false;
+      if(res&&res.remaining>0&&(!res.resolved))regionStuck=true;
+      if(placeMode==='nearby')renderPlaceChips();
+    }
+  }).withFailureHandler(function(e){regionBusy=false;regionStuck=true;}).resolvePlaceRegions(8);
 }
 function pickPlace(n){selPlace=(selPlace===n?null:n);renderPlaceChips();}
 function quickAddPlace(){
